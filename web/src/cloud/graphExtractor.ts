@@ -1,0 +1,225 @@
+import { generate } from '../hybrid';
+import type {
+  AnonymizedChunk,
+  DealRuleNode,
+  DetectedSpan,
+  KnowledgeGraph,
+  PartnerNode,
+  PayloadLogEntry,
+  ProductNode,
+  VentureNode,
+} from '../types';
+
+const GRAPH_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    ventures: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          venture_id: { type: 'string' },
+          venture_token: { type: 'string' },
+          min_margin_pct_token: { type: 'string' },
+        },
+        required: ['venture_id', 'venture_token', 'min_margin_pct_token'],
+      },
+    },
+    partners: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          partner_id: { type: 'string' },
+          partner_token: { type: 'string' },
+          venture_id: { type: 'string' },
+          approval_rules: { type: 'string' },
+        },
+        required: ['partner_id', 'partner_token', 'venture_id', 'approval_rules'],
+      },
+    },
+    products: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          sku_id: { type: 'string' },
+          sku_token: { type: 'string' },
+          venture_id: { type: 'string' },
+          cogs_token: { type: 'string' },
+          list_price_token: { type: 'string' },
+        },
+        required: ['sku_id', 'sku_token', 'venture_id', 'cogs_token', 'list_price_token'],
+      },
+    },
+    dealRules: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          rule_id: { type: 'string' },
+          venture_id: { type: 'string' },
+          max_discount_pct_token: { type: 'string' },
+          min_qty_condition: { type: 'string' },
+          requires_partner_approval: { type: 'boolean' },
+          source_doc_name: { type: 'string' },
+          page_or_section: { type: 'string' },
+          verbatim_blinded_excerpt: { type: 'string' },
+        },
+        required: [
+          'rule_id',
+          'venture_id',
+          'max_discount_pct_token',
+          'min_qty_condition',
+          'requires_partner_approval',
+          'source_doc_name',
+          'page_or_section',
+          'verbatim_blinded_excerpt',
+        ],
+      },
+    },
+  },
+  required: ['ventures', 'partners', 'products', 'dealRules'],
+} as const;
+
+function asStr(value: unknown): string {
+  return typeof value === 'string' ? value : value == null ? '' : String(value);
+}
+
+function normalizeVenture(raw: unknown): VentureNode {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    venture_id: asStr(r.venture_id),
+    venture_token: asStr(r.venture_token),
+    min_margin_pct_token: asStr(r.min_margin_pct_token),
+  };
+}
+
+function normalizePartner(raw: unknown): PartnerNode {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    partner_id: asStr(r.partner_id),
+    partner_token: asStr(r.partner_token),
+    venture_id: asStr(r.venture_id),
+    approval_rules: asStr(r.approval_rules),
+  };
+}
+
+function normalizeProduct(raw: unknown): ProductNode {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    sku_id: asStr(r.sku_id),
+    sku_token: asStr(r.sku_token),
+    venture_id: asStr(r.venture_id),
+    cogs_token: asStr(r.cogs_token),
+    list_price_token: asStr(r.list_price_token),
+  };
+}
+
+function normalizeDealRule(raw: unknown): DealRuleNode {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    rule_id: asStr(r.rule_id),
+    venture_id: asStr(r.venture_id),
+    max_discount_pct_token: asStr(r.max_discount_pct_token),
+    min_qty_condition: asStr(r.min_qty_condition),
+    requires_partner_approval: Boolean(r.requires_partner_approval),
+    source_doc_name: asStr(r.source_doc_name),
+    page_or_section: asStr(r.page_or_section),
+    verbatim_blinded_excerpt: asStr(r.verbatim_blinded_excerpt),
+  };
+}
+
+function parseGraphResponse(rawText: string): KnowledgeGraph {
+  const cleaned = rawText
+    .trim()
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/, '');
+  const parsed = JSON.parse(cleaned) as Record<string, unknown>;
+
+  return {
+    ventures: Array.isArray(parsed.ventures) ? parsed.ventures.map(normalizeVenture) : [],
+    partners: Array.isArray(parsed.partners) ? parsed.partners.map(normalizePartner) : [],
+    products: Array.isArray(parsed.products) ? parsed.products.map(normalizeProduct) : [],
+    dealRules: Array.isArray(parsed.dealRules) ? parsed.dealRules.map(normalizeDealRule) : [],
+  };
+}
+
+function formatChunkLine(chunk: AnonymizedChunk, bodyText: string): string {
+  return `[${chunk.docName} p.${chunk.page} #${chunk.index}] ${bodyText}`;
+}
+
+function rehydrateChunkText(text: string, detected: DetectedSpan[]): string {
+  let out = text;
+  for (const span of detected) {
+    if (span.token) {
+      out = out.split(span.token).join(span.text);
+    }
+  }
+  return out;
+}
+
+function buildPrompt(chunks: AnonymizedChunk[], tokenLegend: string): string {
+  const instructions = [
+    'Extract a structured deal knowledge graph from the BLINDED document chunks below.',
+    'All sensitive entities have been replaced with bracketed placeholder tokens such as [VENTURE_1], [PARTNER_1], [SKU_1], [COST_1], [PRICE_1], [DISCOUNT_CAP_1], [MARGIN_FLOOR_1].',
+    'Treat tokens as opaque identifiers. Do NOT attempt to guess, infer, or reveal real-world identities or raw values.',
+    'Preserve exact token strings in *_token fields and in verbatim_blinded_excerpt.',
+    'Link partners, products, and dealRules to their parent venture via venture_id.',
+  ].join('\n');
+
+  const body = chunks.map((c) => formatChunkLine(c, c.text)).join('\n\n');
+  const legendBlock = tokenLegend.trim() ? `Token Legend:\n${tokenLegend.trim()}\n\n` : '';
+  return `${instructions}\n\n${legendBlock}Blinded Chunks:\n${body}`;
+}
+
+/**
+ * Synthesizes a KnowledgeGraph from already-blinded chunks via one cloud call per document group.
+ * Records the exact outbound prompt in payloadLog alongside local-only rehydrated text.
+ */
+export async function synthesizeGraph(
+  blinded: AnonymizedChunk[],
+  tokenLegend: string
+): Promise<{ graph: KnowledgeGraph; payloadLog: PayloadLogEntry[] }> {
+  const groups = new Map<string, AnonymizedChunk[]>();
+  for (const chunk of blinded) {
+    const existing = groups.get(chunk.docName);
+    if (existing) {
+      existing.push(chunk);
+    } else {
+      groups.set(chunk.docName, [chunk]);
+    }
+  }
+
+  const merged: KnowledgeGraph = {
+    ventures: [],
+    partners: [],
+    products: [],
+    dealRules: [],
+  };
+  const payloadLog: PayloadLogEntry[] = [];
+
+  for (const [, chunks] of groups) {
+    const prompt = buildPrompt(chunks, tokenLegend);
+    const result = await generate('synthesize', prompt, GRAPH_RESPONSE_SCHEMA);
+    const sentAt = Date.now();
+    const docGraph = parseGraphResponse(result.text);
+
+    merged.ventures.push(...docGraph.ventures);
+    merged.partners.push(...docGraph.partners);
+    merged.products.push(...docGraph.products);
+    merged.dealRules.push(...docGraph.dealRules);
+
+    for (const chunk of chunks) {
+      payloadLog.push({
+        docName: chunk.docName,
+        page: chunk.page,
+        localText: formatChunkLine(chunk, rehydrateChunkText(chunk.text, chunk.detected)),
+        cloudText: prompt,
+        sentAt,
+      });
+    }
+  }
+
+  return { graph: merged, payloadLog };
+}
