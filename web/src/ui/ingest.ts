@@ -9,6 +9,7 @@ import { saveWorkspaceLocal } from '../storage/db';
 import type { AnonymizeResult, DocChunk, KnowledgeGraph, PayloadLogEntry, Workspace } from '../types';
 import { store } from './state';
 import { el, errText, newId, toast } from './util';
+import { isSpaFallback } from '../ingest/spaFallback';
 
 /**
  * Sample docs (TD-6). Each entry lists candidate paths under /sample-docs/:
@@ -226,7 +227,12 @@ export function mountIngest(root: HTMLElement): void {
           try {
             const r = await fetch(`/sample-docs/${name}`);
             if (r.ok) {
-              fetched = { docName: name, text: await r.text() };
+              const body = await r.text();
+              if (isSpaFallback(r.headers.get('content-type'), body)) {
+                tried.push(`${name} (SPA fallback, not found)`);
+                continue;
+              }
+              fetched = { docName: name, text: body };
               break;
             }
             tried.push(`${name} (HTTP ${r.status})`);

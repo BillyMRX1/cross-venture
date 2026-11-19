@@ -67,6 +67,13 @@ export function onDeviceModel(): string {
 }
 
 /**
+ * Pure decision: whether to enable the App Check debug token. Only in dev builds with VITE_APPCHECK_DEBUG === 'true'.
+ */
+export function shouldUseAppCheckDebug(isDev: boolean, flag: string | undefined): boolean {
+  return isDev && flag === 'true';
+}
+
+/**
  * Activates Firebase App Check with ReCaptchaEnterpriseProvider (reCAPTCHA Enterprise / Fraud Defense site key) when VITE_APPCHECK_SITE_KEY is set.
  * Safe to call repeatedly; guarded for non-browser environments.
  */
@@ -77,6 +84,13 @@ export function activateAppCheck(app: FirebaseApp): AppCheck | null {
   const siteKey = readEnv('VITE_APPCHECK_SITE_KEY');
   if (!siteKey) {
     return null;
+  }
+  const metaEnv = (import.meta as { env?: Record<string, string | boolean | undefined> }).env;
+  if (
+    shouldUseAppCheckDebug(metaEnv?.DEV === true, metaEnv?.VITE_APPCHECK_DEBUG as string | undefined) &&
+    typeof self !== 'undefined'
+  ) {
+    (self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean | string }).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
   }
   try {
     appCheckInstance = initializeAppCheck(app, {
