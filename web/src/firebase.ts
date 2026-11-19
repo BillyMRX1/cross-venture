@@ -1,5 +1,5 @@
 import { initializeApp, getApps, getApp as getFirebaseApp, type FirebaseApp, type FirebaseOptions } from 'firebase/app';
-import { initializeAppCheck, ReCaptchaV3Provider, type AppCheck } from 'firebase/app-check';
+import { initializeAppCheck, ReCaptchaEnterpriseProvider, type AppCheck } from 'firebase/app-check';
 import { getAI, GoogleAIBackend, type AI } from 'firebase/ai';
 import {
   initializeFirestore,
@@ -67,7 +67,7 @@ export function onDeviceModel(): string {
 }
 
 /**
- * Activates Firebase App Check with ReCaptchaV3Provider when VITE_APPCHECK_SITE_KEY is set.
+ * Activates Firebase App Check with ReCaptchaEnterpriseProvider (reCAPTCHA Enterprise / Fraud Defense site key) when VITE_APPCHECK_SITE_KEY is set.
  * Safe to call repeatedly; guarded for non-browser environments.
  */
 export function activateAppCheck(app: FirebaseApp): AppCheck | null {
@@ -80,7 +80,7 @@ export function activateAppCheck(app: FirebaseApp): AppCheck | null {
   }
   try {
     appCheckInstance = initializeAppCheck(app, {
-      provider: new ReCaptchaV3Provider(siteKey),
+      provider: new ReCaptchaEnterpriseProvider(siteKey),
       isTokenAutoRefreshEnabled: true,
     });
     return appCheckInstance;

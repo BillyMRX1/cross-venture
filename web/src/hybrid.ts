@@ -41,6 +41,7 @@ async function ensureOnDeviceBaseModel(): Promise<GenerativeModel> {
         onDeviceParams: {
           createOptions: {
             expectedInputs: [{ type: 'text' }],
+            expectedOutputs: [{ type: 'text', languages: ['en'] }],
           },
         },
         inCloudParams: {
@@ -119,6 +120,7 @@ export async function generate(
         onDeviceParams: {
           createOptions: {
             expectedInputs: [{ type: 'text' }],
+            expectedOutputs: [{ type: 'text', languages: ['en'] }],
           },
           promptOptions: {
             responseConstraint: jsonSchema,
@@ -154,10 +156,14 @@ interface PromptApiSession {
 }
 
 interface PromptApiGlobal {
-  availability?: (options?: { expectedInputs?: Array<{ type: string }> }) => Promise<string>;
+  availability?: (options?: {
+    expectedInputs?: Array<{ type: string }>;
+    expectedOutputs?: Array<{ type: string; languages?: string[] }>;
+  }) => Promise<string>;
   create?: (options?: {
     temperature?: number;
     expectedInputs?: Array<{ type: string }>;
+    expectedOutputs?: Array<{ type: string; languages?: string[] }>;
     initialPrompts?: Array<{ role: string; content: string }>;
     monitor?: () => void;
   }) => Promise<PromptApiSession>;
@@ -171,7 +177,10 @@ export async function onDeviceStatus(): Promise<{ available: boolean; detail: st
   try {
     const lm = (globalThis as Record<string, unknown>).LanguageModel as PromptApiGlobal | undefined;
     if (typeof lm?.availability === 'function') {
-      const status = await lm.availability({ expectedInputs: [{ type: 'text' }] });
+      const status = await lm.availability({
+        expectedInputs: [{ type: 'text' }],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
+      });
       return {
         available: status === 'available',
         detail: String(status),
@@ -182,6 +191,7 @@ export async function onDeviceStatus(): Promise<{ available: boolean; detail: st
       const session = await lm.create({
         temperature: 0,
         expectedInputs: [{ type: 'text' }],
+        expectedOutputs: [{ type: 'text', languages: ['en'] }],
         initialPrompts: [{ role: 'system', content: 'Respond with the single letter X.' }],
         monitor: () => {},
       });
