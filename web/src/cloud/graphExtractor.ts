@@ -130,7 +130,7 @@ function normalizeDealRule(raw: unknown): DealRuleNode {
   };
 }
 
-function parseGraphResponse(rawText: string): KnowledgeGraph {
+function parseGraphResponse(rawText: string, aliasToDocName: Map<string, string>): KnowledgeGraph {
   const cleaned = rawText
     .trim()
     .replace(/^```(?:json)?\s*/i, '')
@@ -141,12 +141,18 @@ function parseGraphResponse(rawText: string): KnowledgeGraph {
     ventures: Array.isArray(parsed.ventures) ? parsed.ventures.map(normalizeVenture) : [],
     partners: Array.isArray(parsed.partners) ? parsed.partners.map(normalizePartner) : [],
     products: Array.isArray(parsed.products) ? parsed.products.map(normalizeProduct) : [],
-    dealRules: Array.isArray(parsed.dealRules) ? parsed.dealRules.map(normalizeDealRule) : [],
+    dealRules: Array.isArray(parsed.dealRules)
+      ? parsed.dealRules.map(normalizeDealRule).map((rule) => ({
+          ...rule,
+          // Restore the real filename locally; unknown values are left untouched (never guessed).
+          source_doc_name: aliasToDocName.get(rule.source_doc_name.trim()) ?? rule.source_doc_name,
+        }))
+      : [],
   };
 }
 
-function formatChunkLine(chunk: AnonymizedChunk, bodyText: string): string {
-  return `[${chunk.docName} p.${chunk.page} #${chunk.index}] ${bodyText}`;
+function formatChunkLine(chunk: AnonymizedChunk, bodyText: string, docLabel: string): string {
+  return `[${docLabel} p.${chunk.page} #${chunk.index}] ${bodyText}`;
 }
 
 function rehydrateChunkText(text: string, detected: DetectedSpan[]): string {
@@ -159,16 +165,17 @@ function rehydrateChunkText(text: string, detected: DetectedSpan[]): string {
   return out;
 }
 
-function buildPrompt(chunks: AnonymizedChunk[], tokenLegend: string): string {
+function buildPrompt(chunks: AnonymizedChunk[], tokenLegend: string, alias: string): string {
   const instructions = [
     'Extract a structured deal knowledge graph from the BLINDED document chunks below.',
     'All sensitive entities have been replaced with bracketed placeholder tokens such as [VENTURE_1], [PARTNER_1], [SKU_1], [COST_1], [PRICE_1], [DISCOUNT_CAP_1], [MARGIN_FLOOR_1].',
     'Treat tokens as opaque identifiers. Do NOT attempt to guess, infer, or reveal real-world identities or raw values.',
     'Preserve exact token strings in *_token fields and in verbatim_blinded_excerpt.',
     'Link partners, products, and dealRules to their parent venture via venture_id.',
+    'Documents are identified only by neutral aliases such as DOC_1. In source_doc_name, cite the exact alias shown in the chunk header (e.g. DOC_1).',
   ].join('\n');
 
-  const body = chunks.map((c) => formatChunkLine(c, c.text)).join('\n\n');
+  const body = chunks.map((c) => formatChunkLine(c, c.text, alias)).join('\n\n');
   const legendBlock = tokenLegend.trim() ? `Token Legend:\n${tokenLegend.trim()}\n\n` : '';
   return `${instructions}\n\n${legendBlock}Blinded Chunks:\n${body}`;
 }
@@ -199,11 +206,15 @@ export async function synthesizeGraph(
   };
   const payloadLog: PayloadLogEntry[] = [];
 
-  for (const [, chunks] of groups) {
-    const prompt = buildPrompt(chunks, tokenLegend);
+  // Deterministic aliases by first appearance order; filenames never leave the device.
+  let aliasCounter = 0;
+  for (const [docName, chunks] of groups) {
+    aliasCounter += 1;
+    const alias = `DOC_${aliasCounter}`;
+    const prompt = buildPrompt(chunks, tokenLegend, alias);
     const result = await generate('synthesize', prompt, GRAPH_RESPONSE_SCHEMA);
     const sentAt = Date.now();
-    const docGraph = parseGraphResponse(result.text);
+    const docGraph = parseGraphResponse(result.text, new Map([[alias, docName]]));
 
     merged.ventures.push(...docGraph.ventures);
     merged.partners.push(...docGraph.partners);
@@ -214,7 +225,7 @@ export async function synthesizeGraph(
       payloadLog.push({
         docName: chunk.docName,
         page: chunk.page,
-        localText: formatChunkLine(chunk, rehydrateChunkText(chunk.text, chunk.detected)),
+        localText: formatChunkLine(chunk, rehydrateChunkText(chunk.text, chunk.detected), chunk.docName),
         cloudText: prompt,
         sentAt,
       });
