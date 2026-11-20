@@ -122,7 +122,9 @@ function escapeRe(s: string): string {
  * keep digit-boundary guards so "40" never matches inside "1400". Names are
  * matched as whole words, case-insensitively; multi-word PARTNER values are
  * additionally checked by first and last word (mirrors anonymizer sweep
- * pass B). Best-effort by design: the return counts how many values were
+ * pass B — this can false-positive on common words like "Jakarta" or "Bank",
+ * which fails closed: the pre-send gate blocks rather than leaks).
+ * Best-effort by design: the return counts how many values were
  * actually scanned so the UI can be honest about scope.
  */
 export interface LeakScan {
@@ -132,7 +134,8 @@ export interface LeakScan {
 
 function splitNumber(value: string): { int: string; dec: string | null } | null {
   const t = value.trim()
-    .replace(/^(?:rp\.?|rs\.?|[$€£¥₹])\s*/i, '')
+    .replace(/^(?:rp\.?|rs\.?|usd|idr|eur|gbp|jpy|sgd|aud|chf)\s*/i, '')
+    .replace(/^(?:[$€£¥₹])\s*/i, '')
     .replace(/\s*(?:usd|idr|eur|gbp|jpy|sgd|aud|chf|rupiah|dolar|dollars?)$/i, '')
     .replace(/\s*(?:%|percent|pct|persen)$/i, '')
     .trim();
@@ -179,7 +182,9 @@ export function findLeakedValues(tokenMap: TokenMap, cloudText: string, where: s
       checked += 1;
       let matched: string | null = null;
       for (const form of numericForms(num.int, num.dec)) {
-        const re = new RegExp(`(?:^|[^0-9.,])${escapeRe(form)}(?![0-9])`);
+        // reject only a preceding digit or a separator glued to a digit, so
+        // 'Rp.1250' / 'a,1250' still hit while '1400' never matches '40'.
+        const re = new RegExp(`(?<![0-9])(?<![0-9][.,])${escapeRe(form)}(?![0-9])`);
         if (re.test(cloudText)) {
           matched = form;
           break;

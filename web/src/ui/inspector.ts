@@ -86,9 +86,16 @@ function selfCheckBanner(entries: PayloadLogEntry[], ws: Workspace): HTMLElement
   }
   const hits: LeakHit[] = [];
   let checked = 0;
+  const seenHit = new Set<string>(); // chunk entries share one cloudText — one hit per token+value
   for (const e of entries) {
     const scan = findLeakedValues(ws.tokenMap, e.cloudText, `${e.docName} p.${e.page}`);
-    hits.push(...scan.hits);
+    for (const h of scan.hits) {
+      const key = `${h.token}\u0000${h.value}`;
+      if (!seenHit.has(key)) {
+        seenHit.add(key);
+        hits.push(h);
+      }
+    }
     checked = scan.checked; // same token map per payload; last scan is representative
   }
   if (hits.length === 0) {

@@ -26,6 +26,22 @@ describe('findLeakedValues — numeric form coverage', () => {
     expect(hits.length).toBe(1);
   });
 
+  it('catches leading currency CODES (review F1): "USD 1,250" vs "1,250" and "IDR 1.500.000" vs "1500000"', () => {
+    expect(findLeakedValues({ '[COST_1]': 'USD 1,250' }, 'cost 1,250 net', 'x').hits.length).toBe(1);
+    expect(findLeakedValues({ '[PRICE_1]': 'IDR 1.500.000' }, 'total 1500000 paid', 'x').hits.length).toBe(1);
+  });
+
+  it('numbers glued to separators still hit (review F2): "Rp.1250" and "a,1250" CSV', () => {
+    expect(findLeakedValues({ '[COST_1]': '1250' }, 'harga Rp.1250 per unit', 'x').hits.length).toBe(1);
+    expect(findLeakedValues({ '[COST_1]': '1250' }, 'sku-7,a,1250,2', 'x').hits.length).toBe(1);
+  });
+
+  it('boundary regression after F2: 40 still misses "1400" and "1.400"', () => {
+    expect(findLeakedValues({ '[COST_1]': '40' }, 'batch of 1400 units', 'x').hits.length).toBe(0);
+    expect(findLeakedValues({ '[COST_1]': '40' }, 'harga 1.400 perak', 'x').hits.length).toBe(0);
+    expect(findLeakedValues({ '[COST_1]': '40' }, 'qty 1,400 pcs', 'x').hits.length).toBe(0);
+  });
+
   it('catches EUR prefix + grouping vs plain digits + suffix: €1,200 vs "1200 EUR"', () => {
     const { hits } = findLeakedValues({ '[PRICE_1]': '€1,200' }, 'listed at 1200 EUR', 'x');
     expect(hits.length).toBe(1);
