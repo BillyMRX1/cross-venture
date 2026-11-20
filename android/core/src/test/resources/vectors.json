@@ -1,0 +1,37 @@
+{
+  "generatedBy": "web vault semantics (node webcrypto, AES-256-GCM, base64url unpadded)",
+  "vectors": [
+    {
+      "name": "v1",
+      "keyJwk": {
+        "key_ops": [
+          "encrypt",
+          "decrypt"
+        ],
+        "ext": true,
+        "alg": "A256GCM",
+        "kty": "oct",
+        "k": "ZUyjDwcF64K_WIGNkniYLljwkamFBiA-874RDHSEQFY"
+      },
+      "ivB64Url": "2uQN0k3mgX8gKHwO",
+      "cipherB64Url": "-PgjN-4RMkOO1FLD1MYqfJzt7r7Smt7AhjNwnNimqUvhQCbD_enO6N18EUpjDZNbXm-bBqgXEqXhp6eJRHIOsINP68ED5T6AKvy5JDvoRnxizaD1N2L3bzqzeLx-c-lDgmgArxM",
+      "plainJson": "{\"graph\":{\"deals\":[\"Nomad Studio [COST_1]\"]},\"tokenMap\":{\"[PARTNER_1]\":\"Marcus Tan\"}}"
+    },
+    {
+      "name": "v2",
+      "keyJwk": {
+        "key_ops": [
+          "encrypt",
+          "decrypt"
+        ],
+        "ext": true,
+        "alg": "A256GCM",
+        "kty": "oct",
+        "k": "KR7cMXL0nPZv5SwcQLghLo3D7-Wuy3k2kH1hkQTgSF4"
+      },
+      "ivB64Url": "LZTxLpVqAZgw2aZX",
+      "cipherB64Url": "3Nkic9TeJ_7jAw9Xi4wyhtTRdeVcPyU38Qc_dzCF1prn70Kn3LuR46HwZrrj7Ib_CXEj6k44zM1hJhmNNEOE4nWSN_DgAZB8i08vVye0qXdV",
+      "plainJson": "{\"s\":\"Harga Jual — Sari Dewi ✓ — 1.500.000 Rp 😀\",\"n\":42}"
+    }
+  ]
+}
