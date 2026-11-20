@@ -2,7 +2,7 @@
 // paste-pairing pull, online/offline chip. Degrades to a setup hint when
 // Firebase env vars are absent instead of crashing.
 import { exportVaultKey, generateVaultKey } from '../crypto/vault';
-import { pullAndDecrypt, pushEncrypted } from '../storage/db';
+import { pullAndDecrypt, pushEncrypted, ReadOnlyWorkspaceError } from '../storage/db';
 import { goTab, lsGet, lsSet, store } from './state';
 import { copyText, el, errText, newId, toast } from './util';
 
@@ -130,10 +130,14 @@ export function mountSync(root: HTMLElement): void {
       setStatus('note', 'Encrypting client-side (AES-256-GCM) and writing workspaces/' + ws.id.slice(0, 8) + '…');
       try {
         await pushEncrypted(ws.id, { graph: ws.graph, tokenMap: ws.tokenMap }, key);
-        setStatus('note--ok', 'Pushed. Firestore stores only {wsId, iv, cipher, updatedAt} — never plaintext.');
+        setStatus('note--ok', 'Pushed. Firestore stores only {wsId, ownerUid, iv, cipher, updatedAt} — never plaintext.');
         toast('Encrypted workspace pushed', 'ok');
       } catch (e) {
-        setStatus('note--err', `Push failed: ${errText(e)}`);
+        if (e instanceof ReadOnlyWorkspaceError) {
+          setStatus('note--warn', `Read-only: ${e.message}`);
+        } else {
+          setStatus('note--err', `Push failed: ${errText(e)}`);
+        }
       } finally {
         pushBtn.disabled = !configured || !store.workspace;
       }
@@ -258,7 +262,7 @@ export function mountSync(root: HTMLElement): void {
       'div',
       { class: 'card' },
       el('h2', {}, '2 · Push encrypted workspace'),
-      el('p', {}, 'Client-side encrypts {graph, tokenMap}; Firestore document holds only {wsId, iv, cipher, updatedAt}.'),
+      el('p', {}, 'Client-side encrypts {graph, tokenMap}; Firestore document holds only {wsId, ownerUid, iv, cipher, updatedAt}.'),
       pushBtn,
     ),
     el(

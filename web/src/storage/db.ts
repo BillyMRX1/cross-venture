@@ -1,7 +1,16 @@
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { getAuth } from 'firebase/auth';
 import { decryptJson, encryptJson, importVaultKey } from '../crypto/vault';
 import { ensureSignedIn, getDb } from '../firebase';
 import type { KnowledgeGraph, TokenMap, Workspace } from '../types';
+
+/** Thrown when this device may read but not write a cloud workspace (foreign-owned or unowned legacy). */
+export class ReadOnlyWorkspaceError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ReadOnlyWorkspaceError';
+  }
+}
 
 const DB_NAME = 'cross-venture-workspaces';
 const DB_VERSION = 1;
@@ -105,7 +114,9 @@ export async function loadWorkspaceLocal(): Promise<Workspace | null> {
 
 /**
  * Encrypts { graph, tokenMap } locally with AES-256-GCM and writes ONLY
- * { wsId, iv, cipher, updatedAt } to Firestore at workspaces/{wsId}.
+ * { wsId, ownerUid, iv, cipher, updatedAt } to Firestore at workspaces/{wsId}.
+ * ownerUid is the non-sensitive anonymous auth uid of the creator; it is immutable.
+ * Throws ReadOnlyWorkspaceError for docs owned by someone else or unowned legacy docs.
  */
 export async function pushEncrypted(
   wsId: string,
@@ -121,9 +132,30 @@ export async function pushEncrypted(
     throw new Error('Firebase anonymous sign-in failed; cannot push encrypted workspace');
   }
 
+  // ensureSignedIn() only returns a boolean; the uid comes from the Auth instance of this app.
+  const uid = getAuth(db.app).currentUser?.uid;
+  if (!uid) {
+    throw new Error('No authenticated Firebase user; cannot determine workspace owner');
+  }
+
+  const ref = doc(db, 'workspaces', wsId);
+  const existing = await getDoc(ref);
+  if (existing.exists()) {
+    const owner = (existing.data() as { ownerUid?: unknown } | undefined)?.ownerUid;
+    if (owner !== uid) {
+      // Foreign-owned or unowned legacy doc: never overwrite, never claim.
+      throw new ReadOnlyWorkspaceError(
+        typeof owner === 'string'
+          ? 'This workspace is owned by another device. This device is read-only; push from the original device.'
+          : 'This legacy workspace has no owner and cannot be modified from here. It stays readable via pairing.'
+      );
+    }
+  }
+
   const { iv, cipher } = await encryptJson(key, payload);
-  await setDoc(doc(db, 'workspaces', wsId), {
+  await setDoc(ref, {
     wsId,
+    ownerUid: uid,
     iv,
     cipher,
     updatedAt: Date.now(),
