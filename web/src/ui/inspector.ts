@@ -85,16 +85,18 @@ function selfCheckBanner(entries: PayloadLogEntry[], ws: Workspace): HTMLElement
     );
   }
   const hits: LeakHit[] = [];
-  const tokenCount = Object.keys(ws.tokenMap).length;
+  let checked = 0;
   for (const e of entries) {
-    hits.push(...findLeakedValues(ws.tokenMap, e.cloudText, `${e.docName} p.${e.page}`));
+    const scan = findLeakedValues(ws.tokenMap, e.cloudText, `${e.docName} p.${e.page}`);
+    hits.push(...scan.hits);
+    checked = scan.checked; // same token map per payload; last scan is representative
   }
   if (hits.length === 0) {
     return el(
       'div',
       { class: 'banner banner--pass' },
-      el('strong', {}, `SELF-CHECK PASS — zero of ${tokenCount} real value(s) found in ${entries.length} cloud payload(s)`),
-      ' The regex scan matched every known token value (names case-insensitive, numbers with digit boundaries) against the verbatim outbound text. Nothing matched.',
+      el('strong', {}, `SELF-CHECK PASS — known-value check: 0 of ${checked} redacted value(s) found in ${entries.length} cloud payload(s)`),
+      ' Best-effort scan of the verbatim outbound text: numbers in plain, comma- and dot-grouped forms (currency/percent affixes stripped, digit-boundary guards), names as whole words, partner names also by first/last word. A pass means no known value matched — it is not a proof that no sensitive data was sent.',
     );
   }
   const list = el('ul');
@@ -103,7 +105,7 @@ function selfCheckBanner(entries: PayloadLogEntry[], ws: Workspace): HTMLElement
   return el(
     'div',
     { class: 'banner banner--fail' },
-    el('strong', {}, `SELF-CHECK FAIL — ${hits.length} real value(s) leaked into cloud payloads`),
+    el('strong', {}, `SELF-CHECK FAIL — known-value check: ${hits.length} leaked value(s) of ${checked} redacted value(s) in cloud payloads`),
     ' Stop using this pipeline and report the anonymizer bug:',
     list,
   );

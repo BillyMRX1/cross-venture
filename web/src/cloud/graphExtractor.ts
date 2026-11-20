@@ -249,7 +249,7 @@ export async function synthesizeGraph(
     const alias = `DOC_${aliasCounter}`;
     const prompt = buildPrompt(chunks, tokenLegend, alias);
 
-    const leaks = findLeakedValues(knownValues, prompt, `pre-send ${alias}`);
+    const { hits: leaks } = findLeakedValues(knownValues, prompt, `pre-send ${alias}`);
     if (leaks.length > 0) {
       const tokens = [...new Set(leaks.map((h) => h.token.replace(/#\d+$/, '')))].sort().join(', ');
       throw new PayloadBlockedError(

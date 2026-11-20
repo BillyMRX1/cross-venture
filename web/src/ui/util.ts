@@ -114,37 +114,102 @@ function escapeRe(s: string): string {
 }
 
 /**
- * Does any known real value from the token map appear verbatim in the exact
- * cloud payload? Numeric values are matched with digit boundaries so "40"
- * does not false-positive inside "1400"; name values are matched as whole
- * words, case-insensitively.
+ * Does any known real value appear verbatim in the exact cloud payload?
+ * CV-SEC-3 (2026-11-20, security Patch 4) — numeric values are matched in
+ * several forms: plain digits (`1250`, `1250.00`), en grouping (`1,250.00`)
+ * and id grouping (`1.250,00`), after stripping currency affixes
+ * (`Rp $ € £ ¥ ₹ USD IDR EUR % percent pct persen …`); all numeric forms
+ * keep digit-boundary guards so "40" never matches inside "1400". Names are
+ * matched as whole words, case-insensitively; multi-word PARTNER values are
+ * additionally checked by first and last word (mirrors anonymizer sweep
+ * pass B). Best-effort by design: the return counts how many values were
+ * actually scanned so the UI can be honest about scope.
  */
-export function findLeakedValues(tokenMap: TokenMap, cloudText: string, where: string): LeakHit[] {
+export interface LeakScan {
+  hits: LeakHit[];
+  checked: number; // values actually scanned (skipped values are not counted)
+}
+
+function splitNumber(value: string): { int: string; dec: string | null } | null {
+  const t = value.trim()
+    .replace(/^(?:rp\.?|rs\.?|[$€£¥₹])\s*/i, '')
+    .replace(/\s*(?:usd|idr|eur|gbp|jpy|sgd|aud|chf|rupiah|dolar|dollars?)$/i, '')
+    .replace(/\s*(?:%|percent|pct|persen)$/i, '')
+    .trim();
+  if (!/^\d[\d.,]*$|^\d$/.test(t)) return null;
+  const groups = t.split(/[.,]/).filter((g) => g.length > 0);
+  if (groups.length === 0 || groups.some((g) => !/^\d+$/.test(g))) return null;
+  let intGroups = groups;
+  let dec: string | null = null;
+  const last = groups[groups.length - 1];
+  if (groups.length >= 2 && last.length <= 2) {
+    dec = last;
+    intGroups = groups.slice(0, -1);
+  }
+  const int = intGroups.join('');
+  if (!/^\d+$/.test(int)) return null;
+  return { int, dec };
+}
+
+function numericForms(int: string, dec: string | null): string[] {
+  const group = (sep: string) => int.replace(/\B(?=(\d{3})+(?!\d))/g, sep);
+  const forms = new Set<string>();
+  if (dec !== null) {
+    forms.add(`${int}.${dec}`);
+    forms.add(int);
+    forms.add(`${group(',')}.${dec}`);
+    forms.add(`${group('.')},${dec}`);
+  } else {
+    forms.add(int);
+    forms.add(group(','));
+    forms.add(group('.'));
+  }
+  return [...forms];
+}
+
+export function findLeakedValues(tokenMap: TokenMap, cloudText: string, where: string): LeakScan {
   const hits: LeakHit[] = [];
+  let checked = 0;
   for (const [token, raw] of Object.entries(tokenMap)) {
     const value = (raw ?? '').trim();
     if (value.length < 2) continue;
-    const numeric = /^\$?[\d,]+(\.\d+)?$/.test(value);
-    if (numeric) {
-      const digits = value.replace(/[$,]/g, '');
-      if (digits.replace(/\./g, '').length < 2) continue;
-      const candidates = new Set<string>([digits]);
-      if (/\.\d+$/.test(digits)) candidates.add(digits.replace(/\.0+$/, ''));
+    const num = splitNumber(value);
+    if (num !== null) {
+      if (num.int.length < 2) continue;
+      checked += 1;
       let matched: string | null = null;
-      for (const cand of candidates) {
-        const re = new RegExp(`(?:^|[^0-9.,])${escapeRe(cand)}(?![0-9])`);
+      for (const form of numericForms(num.int, num.dec)) {
+        const re = new RegExp(`(?:^|[^0-9.,])${escapeRe(form)}(?![0-9])`);
         if (re.test(cloudText)) {
-          matched = cand;
+          matched = form;
           break;
         }
       }
       if (matched !== null) hits.push({ token, value: matched, where });
-    } else {
-      const re = new RegExp(`(?:^|[^A-Za-z])${escapeRe(value)}(?![A-Za-z])`, 'i');
-      if (re.test(cloudText)) hits.push({ token, value, where });
+      continue;
+    }
+    checked += 1;
+    const re = new RegExp(`(?:^|[^A-Za-z])${escapeRe(value)}(?![A-Za-z])`, 'i');
+    if (re.test(cloudText)) {
+      hits.push({ token, value, where });
+      continue;
+    }
+    if (/^\[PARTNER_\d+(?:#\d+)?\]$/.test(token)) {
+      const words = value.split(/\s+/).filter((w) => /[A-Za-z]/.test(w));
+      if (words.length >= 2) {
+        for (const part of [words[0], words[words.length - 1]]) {
+          const w = part.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
+          if (w.length < 3) continue;
+          const partRe = new RegExp(`(?:^|[^A-Za-z])${escapeRe(w)}(?![A-Za-z])`, 'i');
+          if (partRe.test(cloudText)) {
+            hits.push({ token, value: w, where });
+            break;
+          }
+        }
+      }
     }
   }
-  return hits;
+  return { hits, checked };
 }
 
 /* ---------- ids ---------- */
