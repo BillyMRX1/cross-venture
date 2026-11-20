@@ -18,8 +18,9 @@ class CryptoException(message: String, cause: Throwable? = null) : Exception(mes
  */
 object VaultCrypto {
     fun decodeBase64Url(s: String): ByteArray {
-        require(s.none { it == '+' || it == '/' || it == '=' }) { "not base64url (unpadded)" }
-        require(s.isNotEmpty()) { "empty base64url" }
+        // Fail closed through the CryptoException contract (F4), not require().
+        if (s.isEmpty()) throw CryptoException("empty base64url")
+        if (s.any { it == '+' || it == '/' || it == '=' }) throw CryptoException("not base64url (unpadded)")
         return try {
             Base64.getUrlDecoder().decode(s)
         } catch (e: IllegalArgumentException) {

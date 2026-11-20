@@ -6,15 +6,25 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 
 /**
- * Counts deals in a decrypted vault payload ({graph: {deals: [...]}}).
- * Lives in :core so the app never needs its own JSON stack.
- * Returns 0 for malformed/missing structures (fails toward "nothing loaded").
+ * Counts entities in a decrypted vault payload ({graph, tokenMap}).
+ * Field names follow web/src/types.ts KnowledgeGraph:
+ * {ventures: [], partners: [], products: [], dealRules: []} — F2 (review 2026-11-20).
+ * Only counts are exposed: decrypted content must never be rendered or logged raw.
  */
-fun countDeals(plainJson: String): Int {
+data class GraphCounts(val ventures: Int, val partners: Int, val products: Int, val dealRules: Int)
+
+fun summarizeGraph(plainJson: String): GraphCounts {
     return try {
         val root = Json.parseToJsonElement(plainJson).jsonObject
-        ((root["graph"] as? JsonObject)?.get("deals") as? JsonArray)?.size ?: 0
+        val g = root["graph"] as? JsonObject ?: return GraphCounts(0, 0, 0, 0)
+        fun size(key: String): Int = (g[key] as? JsonArray)?.size ?: 0
+        GraphCounts(
+            ventures = size("ventures"),
+            partners = size("partners"),
+            products = size("products"),
+            dealRules = size("dealRules"),
+        )
     } catch (_: Exception) {
-        0
+        GraphCounts(0, 0, 0, 0)
     }
 }

@@ -25,10 +25,11 @@ import androidx.compose.ui.unit.dp
 import com.google.android.gms.tasks.Tasks
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import cv.core.Pairing
 import cv.core.VaultCrypto
-import cv.core.countDeals
+import cv.core.summarizeGraph
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -82,7 +83,7 @@ fun CompanionScreen() {
         when (val s = state) {
             UiState.Idle -> Text("Idle.")
             UiState.Loading -> Text("Loading…")
-            is UiState.Loaded -> Text("Loaded ${s.dealCount} deal(s). Decryption is local; raw content never logged.")
+            is UiState.Loaded -> Text("Loaded ${s.counts.ventures} venture(s), ${s.counts.products} product(s). Decryption is local; raw content never logged.")
             is UiState.Error -> Text("Error: ${s.message}")
         }
     }
@@ -90,8 +91,13 @@ fun CompanionScreen() {
 
 private suspend fun loadWorkspace(pairingString: String): UiState {
     val parsed = Pairing.parse(pairingString)
-    val key = VaultCrypto.importKeyJwk(parsed.keyJwkJson)
+    val key = VaultCrypto.importKeyJwk(parsed.jwkJson())
     val doc = withContext(Dispatchers.IO) {
+        // Firestore rules require an authenticated (anonymous) reader (F3).
+        val auth = FirebaseAuth.getInstance()
+        if (auth.currentUser == null) {
+            Tasks.await(auth.signInAnonymously())
+        }
         Tasks.await(
             FirebaseFirestore.getInstance()
                 .collection("workspaces")
@@ -104,5 +110,5 @@ private suspend fun loadWorkspace(pairingString: String): UiState {
     val cipher = doc.getString("cipher") ?: return UiState.Error("document has no cipher")
     val plain = VaultCrypto.decryptJson(key, iv, cipher)
     // Only counts are shown/logged — decrypted content is never rendered raw here.
-    return UiState.Loaded(countDeals(plain))
+    return UiState.Loaded(summarizeGraph(plain))
 }

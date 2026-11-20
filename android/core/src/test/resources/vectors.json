@@ -11,11 +11,11 @@
         "ext": true,
         "alg": "A256GCM",
         "kty": "oct",
-        "k": "ZUyjDwcF64K_WIGNkniYLljwkamFBiA-874RDHSEQFY"
+        "k": "iPmxZ8l3CJf2IAHjAKnE_CKkUYYIq3916pKKeMP0TQk"
       },
-      "ivB64Url": "2uQN0k3mgX8gKHwO",
-      "cipherB64Url": "-PgjN-4RMkOO1FLD1MYqfJzt7r7Smt7AhjNwnNimqUvhQCbD_enO6N18EUpjDZNbXm-bBqgXEqXhp6eJRHIOsINP68ED5T6AKvy5JDvoRnxizaD1N2L3bzqzeLx-c-lDgmgArxM",
-      "plainJson": "{\"graph\":{\"deals\":[\"Nomad Studio [COST_1]\"]},\"tokenMap\":{\"[PARTNER_1]\":\"Marcus Tan\"}}"
+      "ivB64Url": "6ZJHa495dn3lzoNH",
+      "cipherB64Url": "isUAJ1lxI7JpGpaIlm_VQgxNnnEHuIYAWbpmOju292vSblNHfUE4GTdyQhMPk68kKDZmyNWRaSimQOkpCPkseQHHWIw419PdLzbcOyym-ugixf7FgS4_eXsuJktE-zWPbXUK9MU_hojfEg4nS0xEo1L8mRmCS75-fVs3ZK_m-acTIGs1x2aWKe_QtFQBoETUGo4CQJywJcmn5hcS18B86FcfqcW3gPcVzcrH5znHHr3oXZ0De1vWfBq0thIUvd-sz7Kxq25XSf-_qw",
+      "plainJson": "{\"graph\":{\"ventures\":[{\"id\":\"v1\"}],\"partners\":[{\"id\":\"p1\"}],\"products\":[{\"id\":\"pr1\"}],\"dealRules\":[{\"id\":\"r1\",\"requires_partner_approval\":true}]},\"tokenMap\":{\"[PARTNER_1]\":\"Marcus Tan\"}}"
     },
     {
       "name": "v2",
@@ -27,11 +27,11 @@
         "ext": true,
         "alg": "A256GCM",
         "kty": "oct",
-        "k": "KR7cMXL0nPZv5SwcQLghLo3D7-Wuy3k2kH1hkQTgSF4"
+        "k": "w0kcabVvUbzM_yYBElU3OtrjhK2QWqFSyvOHgIi3wXw"
       },
-      "ivB64Url": "LZTxLpVqAZgw2aZX",
-      "cipherB64Url": "3Nkic9TeJ_7jAw9Xi4wyhtTRdeVcPyU38Qc_dzCF1prn70Kn3LuR46HwZrrj7Ib_CXEj6k44zM1hJhmNNEOE4nWSN_DgAZB8i08vVye0qXdV",
-      "plainJson": "{\"s\":\"Harga Jual — Sari Dewi ✓ — 1.500.000 Rp 😀\",\"n\":42}"
+      "ivB64Url": "bD1naQzYDQ75FfVI",
+      "cipherB64Url": "Uw5h_Z8GWDTY2z-Z-zec0JkWkCgCmQbw0HM5GsesJLYlXWW7H249v2N80n5Pbq8bhM-Pkdv-zSk_sGDEmlBxp5T8-1zSk0VJyAOcATRwo3ZsXKN8M7KWljBh6c57gMO2AbAvvtRv1fpKfNrdbCV7Cdd0FzfyYGe1qIAtkGxqJRjzbIkAJrn4wZdgKYksQWRw8Dd3Sv8",
+      "plainJson": "{\"graph\":{\"ventures\":[],\"partners\":[],\"products\":[],\"dealRules\":[]},\"tokenMap\":{\"[PARTNER_1]\":\"Sari Dewi ✓ — 1.500.000 Rp 😀\"}}"
     }
   ]
 }
