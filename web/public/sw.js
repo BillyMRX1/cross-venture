@@ -1,9 +1,30 @@
-const CACHE_NAME = 'cv-shell-v2';
+const CACHE_NAME = 'cv-shell-v3';
 const PRECACHE_URLS = ['/', '/index.html'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS))
+    (async () => {
+      const cache = await caches.open(CACHE_NAME);
+      await cache.addAll(PRECACHE_URLS);
+      // Discover the content-hashed shell assets (script/modulepreload/stylesheet)
+      // from index.html and precache them too, so the first visit's full shell is
+      // cached immediately — going offline right after loading still reloads the app
+      // (M3 airplane-mode exit criterion). Individual addAll so one failure doesn't
+      // void the rest.
+      try {
+        const res = await fetch('/index.html');
+        if (res.ok) {
+          const html = await res.text();
+          const urls = new Set();
+          for (const m of html.matchAll(/(?:src|href)="([^"]+\.(?:js|mjs|css))"/g)) {
+            urls.add(new URL(m[1], self.location.href).toString());
+          }
+          await Promise.allSettled([...urls].map((u) => cache.addAll([u])));
+        }
+      } catch {
+        // offline during install: keep the base shell precache only
+      }
+    })()
   );
   self.skipWaiting();
 });
