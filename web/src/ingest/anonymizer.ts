@@ -414,14 +414,16 @@ function tableColumnType(text: string, start: number): EntityType | undefined {
   while (cursor >= 0) {
     const prevStart = text.lastIndexOf('\n', cursor - 1) + 1;
     const candidate = text.slice(prevStart, cursor);
+    if (!/^\s*\|/.test(candidate)) return undefined; // not a contiguous table (review F2)
     if (/^\s*\|[\s|:-]+\|\s*$/.test(candidate)) {
       // The header is the line directly above the markdown separator row.
       const headerEnd = prevStart - 1;
       const headerStart = text.lastIndexOf('\n', headerEnd - 1) + 1;
       const header = text.slice(headerStart, headerEnd);
       const cell = (header.split('|')[column + 1] ?? '').trim().toLowerCase();
-      if (/(cost|cogs|modal|harga)/.test(cell)) return 'COST';
-      if (/(retail|price|sell|jual|rate|fee|invoice|charge)/.test(cell)) return 'PRICE';
+      // Word-boundary keywords (review F3): 'rate' must not match 'Corporate'.
+      if (/\b(cost|cogs|modal|harga)\b/.test(cell)) return 'COST';
+      if (/\b(retail|price|sell|jual|rate|fee|invoice|charge)\b/.test(cell)) return 'PRICE';
       return undefined;
     }
     if (prevStart === 0) break;

@@ -48,6 +48,27 @@ describe('anonymizer detectors — CV-SEC-4 (security Patch 5)', () => {
     expect(out).not.toContain('45.5');
   });
 
+  it('regression: currency-code positives survive the lookbehind (review F4)', async () => {
+    const out = await blindedText('harga 1,250.00 USD total');
+    expect(out).not.toContain('1,250.00');
+    const out2 = await blindedText('harga Rp1250 IDR total');
+    expect(out2).not.toContain('1250');
+  });
+
+  it('id grouping with comma decimal tail: "1.500,75" blinded whole (review F4)', async () => {
+    const out = await blindedText('harga 1.500,75 total');
+    expect(out).not.toContain('1.500,75');
+    expect(out).not.toContain('1.500');
+  });
+
+  it('bare ints under NON-money table columns stay unblinded (review F1)', async () => {
+    const table =
+      'stock list\n\n| SKU | Qty | Tanggal |\n|---|---|---|\n| A-1 | 12 | 2026 |\n';
+    const out = await blindedText(table);
+    expect(out).toContain('12');
+    expect(out).toContain('2026');
+  });
+
   // Patch 5 follow-ups (tracked by the security verification doc; not in this slice):
   it.todo('single-word venture names');
   it.todo('signature-block names');
