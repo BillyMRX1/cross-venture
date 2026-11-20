@@ -60,8 +60,13 @@ const REDACT_SCHEMA: object = {
 const PERCENT_RE = /\b\d+(?:\.\d+)?\s?%/g;
 const SYMBOL_MONEY_RE = /[$€£¥₹]\s*\d[\d,]*(?:\.\d+)?/g;
 const CODE_MONEY_RE =
-  /\b\d[\d,]*(?:\.\d+)?\s?(?:USD|IDR|EUR|GBP|SGD|AUD|CAD|JPY|Rupiah|SGD)\b/gi;
+  // (?<!\d)(?<!\d[.,]) — never start mid-number: '1.500.000 IDR' must not be
+  // eaten from '500.000' and leave '1.' behind (Patch 5).
+  /(?<![0-9])(?<![0-9][.,])\d[\d,]*(?:\.\d+)?\s?(?:USD|IDR|EUR|GBP|SGD|AUD|CAD|JPY|Rupiah|SGD)\b/gi;
 const THOUSANDS_RE = /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b/g;
+// Indonesian thousands (`1.500.000`) must be matched BEFORE DECIMAL_RE, which
+// would otherwise blind only the `1.500` fragment and leave junk behind (Patch 5).
+const ID_THOUSANDS_RE = /\b\d{1,3}(?:\.\d{3})+(?:,\d+)?\b/g;
 const DECIMAL_RE = /\b\d+\.\d+\b/g;
 const BARE_INT_RE = /\b\d+\b/g;
 
@@ -181,7 +186,9 @@ function addBareIntegerMoney(
     let lineEnd = text.indexOf('\n', end);
     if (lineEnd < 0) lineEnd = text.length;
     const line = text.slice(lineStart, lineEnd).toLowerCase();
-    if (!MONEY_CONTEXT_RE.test(line)) continue;
+    // In markdown tables the money keyword lives in the column HEADER, not the
+    // row, so accept when the table column is typed COST/PRICE (Patch 5).
+    if (!MONEY_CONTEXT_RE.test(line) && !tableColumnType(text, start)) continue;
 
     const following = text.slice(end, Math.min(text.length, end + 24));
     if (/^\s*(?:units?|pcs|pieces|items|pages|orders)\b/i.test(following)) continue;
@@ -203,6 +210,7 @@ function detectInChunk(chunk: DocChunk, chunkIdx: number): Candidate[] {
   addRegexMatches(money, text, SYMBOL_MONEY_RE, 'MONEY', chunkIdx, exclusions);
   addRegexMatches(money, text, CODE_MONEY_RE, 'MONEY', chunkIdx, exclusions);
   addRegexMatches(money, text, THOUSANDS_RE, 'MONEY', chunkIdx, exclusions);
+  addRegexMatches(money, text, ID_THOUSANDS_RE, 'MONEY', chunkIdx, exclusions);
   addRegexMatches(money, text, DECIMAL_RE, 'MONEY', chunkIdx, exclusions);
   addBareIntegerMoney(money, text, chunkIdx, exclusions, percentSpans);
   out.push(...money);
