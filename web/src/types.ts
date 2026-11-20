@@ -38,7 +38,9 @@ export interface PayloadLogEntry {
   page: number;
   localText: string;   // what stays on device
   cloudText: string;   // EXACT string sent to Firebase AI Logic cloud
-  sentAt: number;
+  sentAt: number;      // when the entry was recorded, BEFORE the request (CV-SEC-2)
+  receivedAt?: number; // when the response arrived; absent when none did
+  status?: 'attempted' | 'responded'; // recorded pre-send; flipped after the call resolves
 }
 
 // FR-2 collections

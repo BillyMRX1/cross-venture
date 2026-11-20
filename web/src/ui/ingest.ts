@@ -1,7 +1,7 @@
 // WS-4 Ingest tab: file upload / paste / sample seed → chunker → anonymizer
 // → blinded cloud graph synthesis → local save. Stages degrade with visible
 // messages when upstream modules throw (expected while stubs are in place).
-import { synthesizeGraph } from '../cloud/graphExtractor';
+import { PayloadBlockedError, synthesizeGraph } from '../cloud/graphExtractor';
 import { anonymizeChunks } from '../ingest/anonymizer';
 import { chunkDocument } from '../ingest/chunker';
 import { extractTextFromFile } from '../ingest/textextract';
@@ -120,17 +120,21 @@ export function mountIngest(root: HTMLElement): void {
         return;
       }
 
-      // Stage 4 — cloud synthesis over BLINDED text only
+      // Stage 4 — cloud synthesis over BLINDED text only. Entries stream into
+      // `log` as they are recorded (before each request), so an attempted-but-
+      // failed cloud call still leaves an honest payload record (CV-SEC-2).
       let graph = EMPTY_GRAPH;
       let log: PayloadLogEntry[] = [];
       setStage('synthesize', 'run');
       try {
-        const synth = await synthesizeGraph(anon.blinded, buildLegend(anon));
+        const synth = await synthesizeGraph(anon.blinded, buildLegend(anon), (entry) => log.push(entry));
         graph = synth.graph;
-        log = synth.payloadLog;
         setStage('synthesize', 'ok', `${graph.ventures.length} venture(s) · ${graph.products.length} SKU(s) · ${graph.dealRules.length} rule(s) · ${log.length} payload(s) logged`);
       } catch (e) {
-        setStage('synthesize', 'err', `${errText(e)} — workspace kept WITHOUT the cloud graph`);
+        const blocked = e instanceof PayloadBlockedError;
+        setStage('synthesize', 'err', blocked
+          ? `${errText(e)} — workspace kept WITHOUT the cloud graph`
+          : `${errText(e)} — workspace kept WITHOUT the cloud graph (${log.length} attempted payload(s) recorded)`);
       }
 
       const ws: Workspace = {

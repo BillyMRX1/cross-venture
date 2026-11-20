@@ -1,4 +1,5 @@
 import { generate } from '../hybrid';
+import { findLeakedValues } from '../ui/util';
 import type {
   AnonymizedChunk,
   DealRuleNode,
@@ -7,8 +8,22 @@ import type {
   PartnerNode,
   PayloadLogEntry,
   ProductNode,
+  TokenMap,
   VentureNode,
 } from '../types';
+
+/**
+ * The outbound prompt failed the pre-send privacy gate: a known real value
+ * (from detection) appears verbatim in it. Fail closed — nothing was sent and
+ * nothing was recorded as sent. The message names tokens and the local docName
+ * only; raw values (partner names, amounts, ...) never appear in it.
+ */
+export class PayloadBlockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PayloadBlockedError';
+  }
+}
 
 const GRAPH_RESPONSE_SCHEMA = {
   type: 'object',
@@ -183,10 +198,15 @@ function buildPrompt(chunks: AnonymizedChunk[], tokenLegend: string, alias: stri
 /**
  * Synthesizes a KnowledgeGraph from already-blinded chunks via one cloud call per document group.
  * Records the exact outbound prompt in payloadLog alongside local-only rehydrated text.
+ * CV-SEC-2 (2026-11-20): every prompt passes a fail-closed pre-send gate (no known
+ * real value may appear verbatim), and each payload entry is recorded BEFORE the
+ * request — so a failed cloud call still leaves an honest 'attempted' record.
+ * onPayload lets callers persist entries as they are recorded, surviving a later throw.
  */
 export async function synthesizeGraph(
   blinded: AnonymizedChunk[],
-  tokenLegend: string
+  tokenLegend: string,
+  onPayload?: (entry: PayloadLogEntry) => void
 ): Promise<{ graph: KnowledgeGraph; payloadLog: PayloadLogEntry[] }> {
   const groups = new Map<string, AnonymizedChunk[]>();
   for (const chunk of blinded) {
@@ -206,30 +226,62 @@ export async function synthesizeGraph(
   };
   const payloadLog: PayloadLogEntry[] = [];
 
+  // Known real values from detection (local-only source of truth). None of them
+  // may appear verbatim in an outbound prompt — enforced before every send.
+  // Distinct values sharing a token are ALL kept (suffixed keys), so no value
+  // silently overwrites another (CV-SEC-2 review F1).
+  const knownValues: TokenMap = {};
+  for (const chunk of blinded) {
+    for (const span of chunk.detected) {
+      if (span.text.trim().length === 0) continue;
+      if (!(span.token in knownValues)) {
+        knownValues[span.token] = span.text;
+      } else if (knownValues[span.token] !== span.text) {
+        knownValues[`${span.token}#${Object.keys(knownValues).length}`] = span.text;
+      }
+    }
+  }
+
   // Deterministic aliases by first appearance order; filenames never leave the device.
   let aliasCounter = 0;
   for (const [docName, chunks] of groups) {
     aliasCounter += 1;
     const alias = `DOC_${aliasCounter}`;
     const prompt = buildPrompt(chunks, tokenLegend, alias);
+
+    const leaks = findLeakedValues(knownValues, prompt, `pre-send ${alias}`);
+    if (leaks.length > 0) {
+      const tokens = [...new Set(leaks.map((h) => h.token.replace(/#\d+$/, '')))].sort().join(', ');
+      throw new PayloadBlockedError(
+        `Payload blocked before sending ${alias} (${docName}): prompt contained known values for ${tokens}. Nothing was sent.`,
+      );
+    }
+
+    const entries: PayloadLogEntry[] = chunks.map((chunk) => ({
+      docName: chunk.docName,
+      page: chunk.page,
+      localText: formatChunkLine(chunk, rehydrateChunkText(chunk.text, chunk.detected), chunk.docName),
+      cloudText: prompt,
+      sentAt: Date.now(),
+      status: 'attempted' as const,
+    }));
+    for (const entry of entries) {
+      payloadLog.push(entry);
+      onPayload?.(entry);
+    }
+
     const result = await generate('synthesize', prompt, GRAPH_RESPONSE_SCHEMA);
-    const sentAt = Date.now();
+    const receivedAt = Date.now();
+    for (const entry of entries) {
+      entry.status = 'responded';
+      entry.receivedAt = receivedAt;
+    }
     const docGraph = parseGraphResponse(result.text, new Map([[alias, docName]]));
 
     merged.ventures.push(...docGraph.ventures);
     merged.partners.push(...docGraph.partners);
     merged.products.push(...docGraph.products);
     merged.dealRules.push(...docGraph.dealRules);
-
-    for (const chunk of chunks) {
-      payloadLog.push({
-        docName: chunk.docName,
-        page: chunk.page,
-        localText: formatChunkLine(chunk, rehydrateChunkText(chunk.text, chunk.detected), chunk.docName),
-        cloudText: prompt,
-        sentAt,
-      });
-    }
   }
 
   return { graph: merged, payloadLog };

@@ -26,7 +26,7 @@ function renderInspector(root: HTMLElement): void {
     const localCol = el('div', {}, colHead('local', 'LOCAL DEVICE MEMORY', 'never leaves this device'));
     const cloudCol = el('div', {}, colHead('cloud', 'EXACT CLOUD PAYLOAD', 'verbatim bytes sent'));
     for (const e of entries) {
-      const label = `${e.docName} · p.${e.page} · ${new Date(e.sentAt).toLocaleTimeString()}`;
+      const label = `${e.docName} · p.${e.page} · ${new Date(e.sentAt).toLocaleTimeString()}${e.status === 'attempted' ? ' · NO CLOUD RESPONSE' : ''}`;
       localCol.append(
         el(
           'div',
