@@ -36,6 +36,9 @@ const ENTITY_TYPES: EntityType[] = [
   'VALUE',
 ];
 
+// Types the tagging model may propose — VALUE is director-internal (Pass C only).
+const MODEL_ENTITY_TYPES: EntityType[] = ENTITY_TYPES.filter((t) => t !== 'VALUE');
+
 const REDACT_SCHEMA: object = {
   type: 'object',
   properties: {
@@ -47,7 +50,7 @@ const REDACT_SCHEMA: object = {
           id: { type: 'string' },
           type: {
             type: 'string',
-            enum: ENTITY_TYPES.filter((t) => t !== 'VALUE'),
+            enum: MODEL_ENTITY_TYPES,
           },
         },
         required: ['id', 'type'],
@@ -588,14 +591,28 @@ function sweepValues(
   // known collision forms so token text cannot re-trip the numeric gate.
   // Boundary regex is shared with the gate (splitNumber/numericForms/escapeRe) so
   // sweep and gate cannot drift apart.
+  // Seed from ALL pre-sweep candidate texts (what the gate later knows via
+  // chunk.detected — which keeps every distinct raw span text, while tokenMap
+  // keeps only one format per token), then CLOSE the form set under
+  // splitNumber -> numericForms: each swept form becomes a registered known
+  // value at gate time, and the gate re-expands every known value's numeric
+  // forms (e.g. VALUE '1250' re-adds forms '1,250' / '1.250'), so the sweep
+  // set must contain the full closure or Pass C self-blocks the payload.
   const collisionForms = new Set<string>();
-  for (const [token, raw] of Object.entries(tokenMap)) {
-    if (token.startsWith('[VALUE_')) continue;
-    const value = (raw ?? '').trim();
-    if (value.length < 2) continue;
+  const formQueue: string[] = [];
+  const expand = (value: string): void => {
     const num = splitNumber(value);
-    if (num === null || num.int.length < 2) continue;
-    for (const form of numericForms(num.int, num.dec)) collisionForms.add(form);
+    if (num === null || num.int.length < 2) return;
+    for (const form of numericForms(num.int, num.dec)) {
+      if (!collisionForms.has(form)) formQueue.push(form);
+    }
+  };
+  for (const candidate of candidates) expand(candidate.text);
+  while (formQueue.length > 0) {
+    const form = formQueue.pop()!;
+    if (collisionForms.has(form)) continue;
+    collisionForms.add(form);
+    expand(form);
   }
   const valueTokenForForm = new Map<string, string>();
   // Start indices high (9001+): if a downstream digit-parser (e.g. qtyOf on a

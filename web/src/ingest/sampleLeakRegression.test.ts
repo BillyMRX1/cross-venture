@@ -87,11 +87,12 @@ describe('decimal-form collisions are fully swept', () => {
     expect(values).toContain('50');
   });
 
-  it('two distinct known values adjacent via a dot do not shift boundaries post-blinding', async () => {
-    // '10%' and '55%' become known; the clause number '10.55' contains both.
-    // The gate skips '55' in the RAW text (preceded by digit+dot) but would
-    // flag it once '10' is blinded — Pass C must blind both.
-    const chunks = chunkDocument('synthetic-adjacent.md', 'Discount cap 10%. Margin floor 55%. See clause 10.55 of the annex.');
+  it('clause-number digits adjacent via a dot are both swept (gate-parity closure)', async () => {
+    // '10%' and '55%' become known spans; '§10.55' is EXCLUDED from detection
+    // (clause reference) so both digits stay literal unless Pass C sweeps them.
+    // The gate skips '55' in raw '§10.55' (digit+dot prefix) but flags it once
+    // '10' is blinded — so Pass C must blind both halves.
+    const chunks = chunkDocument('synthetic-adjacent.md', 'Discount cap 10%. Margin floor 55%. See §10.55 of the annex.');
     const anon = await anonymizeChunks(chunks);
     const { payloadLog } = await synthesizeGraph(anon.blinded, legendOf(anon));
     expect(payloadLog.length).toBeGreaterThan(0);
@@ -99,11 +100,25 @@ describe('decimal-form collisions are fully swept', () => {
       expect(findLeakedValues(anon.tokenMap, entry.cloudText, 'inspector').hits).toEqual([]);
     }
     const text = anon.blinded.map((c) => c.text).join('\n');
-    // Either both halves are swept as VALUE tokens, or the clause number is
-    // tokenized whole by a value detector — both leave no gate-visible literal.
-    expect(text).toMatch(/clause \[[A-Z_]+_\d+\]/);
-    expect(text).not.toMatch(/(?<![0-9])10(?![0-9])/);
-    expect(text).not.toMatch(/(?<![0-9])55(?![0-9])/);
+    expect(text).toMatch(/§\[VALUE_\d+\]\.\[VALUE_\d+\]/);
+  });
+
+  it('grouped integer forms of a decimal value are swept (VALUE closure)', async () => {
+    // $1,250.50 known -> gate form '1250'. The in-word 'v1250' is not caught by
+    // any detector but IS swept by Pass C, registering VALUE '1250' — which at
+    // gate time re-expands grouped forms '1,250'/'1.250'. Closure must therefore
+    // also blind the in-word 'v1,250', or Pass C self-blocks the payload.
+    const chunks = chunkDocument('synthetic-grouped.md', 'Invoice total $1,250.50 settled (ref v1250). The earlier informal quote code v1,250 no longer applies.');
+    const anon = await anonymizeChunks(chunks);
+    const { payloadLog } = await synthesizeGraph(anon.blinded, legendOf(anon));
+    expect(payloadLog.length).toBeGreaterThan(0);
+    for (const entry of payloadLog) {
+      expect(findLeakedValues(anon.tokenMap, entry.cloudText, 'inspector').hits).toEqual([]);
+    }
+    const text = anon.blinded.map((c) => c.text).join('\n');
+    expect(text).not.toContain('1,250');
+    expect(text).toMatch(/ref v\[VALUE_\d+\]/);
+    expect(text).toMatch(/code v\[VALUE_\d+\]/);
   });
 });
 
