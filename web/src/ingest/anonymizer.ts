@@ -634,7 +634,14 @@ function sweepValues(
       re.lastIndex = 0;
       let match: RegExpExecArray | null;
       while ((match = re.exec(text))) {
-        if (overlapsAny(match.index, match.index + match[0].length, rangesByChunk[chunkIdx])) continue;
+        if (overlapsAny(match.index, match.index + match[0].length, rangesByChunk[chunkIdx])) {
+          // A skipped overlapping match must not advance lastIndex past its
+          // interior: self-overlapping forms ('100.100' inside '§500.100.100')
+          // can start a DISJOINT blindable occurrence inside the skipped span.
+          // Monotonic +1 keeps termination.
+          re.lastIndex = match.index + 1;
+          continue;
+        }
         let token = valueTokenForForm.get(form);
         if (!token) {
           do {

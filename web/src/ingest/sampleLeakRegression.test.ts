@@ -122,6 +122,24 @@ describe('decimal-form collisions are fully swept', () => {
   });
 });
 
+describe('self-overlapping forms rescan past skipped matches', () => {
+  it("'§500.100.100.100' leaves no verbatim '100.100' after a partial overlap skip", async () => {
+    // '100.100' first matches INSIDE the already-swept '500.100' range; the
+    // skip must rescan from inside that span, not past it, or the disjoint
+    // '100.100' at +4 survives verbatim next to a blinded token.
+    const chunks = chunkDocument('synthetic-selfoverlap.md', 'Cost $100,100. Price $500,100. See §500.100.100.100 of the annex.');
+    const anon = await anonymizeChunks(chunks);
+    const { payloadLog } = await synthesizeGraph(anon.blinded, legendOf(anon));
+    expect(payloadLog.length).toBeGreaterThan(0);
+    for (const entry of payloadLog) {
+      expect(findLeakedValues(anon.tokenMap, entry.cloudText, 'inspector').hits).toEqual([]);
+    }
+    const text = anon.blinded.map((c) => c.text).join('\n');
+    expect(text).not.toContain('100.100');
+    expect(text).not.toContain('500.100');
+  });
+});
+
 describe('overlap losers cannot leak known values (pre-sweep resolution)', () => {
   it("'15.20' losing to '20.50%' still has its uncovered '15' swept", async () => {
     // DECIMAL_RE emits '15.20' (len 5), PERCENT_RE emits '20.50%' (len 6) over
