@@ -6,6 +6,7 @@ import type {
   EntityType,
 } from '../types';
 import { generate } from '../hybrid';
+import { escapeRe, numericForms, splitNumber } from '../ui/util';
 
 type SpanKind = 'MONEY' | 'PERCENT' | 'NAME';
 
@@ -505,6 +506,18 @@ function sweptEntityType(token: string): EntityType | undefined {
   return type === 'PARTNER' || type === 'VENTURE' || type === 'SKU' ? type : undefined;
 }
 
+/** Any token prefix that is a valid EntityType (including numeric kinds like COST/DISCOUNT_CAP). */
+function tokenEntityType(token: string): EntityType | undefined {
+  const match = /^\[([A-Z][A-Z_]*)(?:_\d+)?(?:#\d+)?\]$/.exec(token);
+  if (!match) return undefined;
+  const type = match[1];
+  return (['PARTNER', 'VENTURE', 'SKU', 'COST', 'PRICE', 'DISCOUNT_CAP', 'MARGIN_FLOOR'] as const).includes(
+    type as 'PARTNER',
+  )
+    ? (type as EntityType)
+    : undefined;
+}
+
 /** Redact further occurrences of full entity values, then partner first/last names. */
 function sweepValues(
   chunks: DocChunk[],
@@ -571,6 +584,32 @@ function sweepValues(
         let match: RegExpExecArray | null;
         while ((match = re.exec(text))) {
           add(chunkIdx, match.index, match.index + match[0].length, match[0], token, 'PARTNER');
+        }
+      }
+    }
+  }
+
+  // Pass C: numeric collision sweep. The pre-send gate (findLeakedValues) flags any
+  // known token value's numeric forms appearing verbatim anywhere in an outbound
+  // prompt — e.g. known '[DISCOUNT_CAP_2]' = '60%' collides with a bare '60 units'
+  // that no value detector tagged. Instead of letting the fail-closed gate block the
+  // whole session, token every literal occurrence of each known numeric value's
+  // forms, using the SAME boundary rule as the gate so the two cannot drift apart.
+  for (const [token, raw] of Object.entries(tokenMap)) {
+    const type = tokenEntityType(token);
+    if (!type) continue;
+    const value = (raw ?? '').trim();
+    if (value.length < 2) continue;
+    const num = splitNumber(value);
+    if (num === null || num.int.length < 2) continue;
+    for (const form of numericForms(num.int, num.dec)) {
+      const re = new RegExp(`(?<![0-9])(?<![0-9][.,])${escapeRe(form)}(?![0-9])`, 'g');
+      for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
+        const text = chunks[chunkIdx].text;
+        re.lastIndex = 0;
+        let match: RegExpExecArray | null;
+        while ((match = re.exec(text))) {
+          add(chunkIdx, match.index, match.index + match[0].length, match[0], token, type);
         }
       }
     }

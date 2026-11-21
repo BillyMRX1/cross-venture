@@ -109,7 +109,7 @@ export interface LeakHit {
   where: string;
 }
 
-function escapeRe(s: string): string {
+export function escapeRe(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
@@ -132,7 +132,7 @@ export interface LeakScan {
   checked: number; // values actually scanned (skipped values are not counted)
 }
 
-function splitNumber(value: string): { int: string; dec: string | null } | null {
+export function splitNumber(value: string): { int: string; dec: string | null } | null {
   const t = value.trim()
     .replace(/^(?:rp\.?|rs\.?|usd|idr|eur|gbp|jpy|sgd|aud|chf)\s*/i, '')
     .replace(/^(?:[$€£¥₹])\s*/i, '')
@@ -154,7 +154,7 @@ function splitNumber(value: string): { int: string; dec: string | null } | null 
   return { int, dec };
 }
 
-function numericForms(int: string, dec: string | null): string[] {
+export function numericForms(int: string, dec: string | null): string[] {
   const group = (sep: string) => int.replace(/\B(?=(\d{3})+(?!\d))/g, sep);
   const forms = new Set<string>();
   if (dec !== null) {
