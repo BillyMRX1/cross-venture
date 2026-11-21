@@ -74,6 +74,16 @@ export function shouldUseAppCheckDebug(isDev: boolean, flag: string | undefined)
 }
 
 /**
+ * Pure decision: value passed to window.FIREBASE_APPCHECK_DEBUG_TOKEN. When a registered debug token
+ * value is supplied via env (dev-only, untracked file), pass it as a string so the SDK exchanges it
+ * directly; otherwise fall back to `true` (SDK generates a local token, which Google rejects unless
+ * separately registered).
+ */
+export function appCheckDebugFlagValue(tokenValue: string | undefined): boolean | string {
+  return typeof tokenValue === 'string' && tokenValue.trim().length > 0 ? tokenValue.trim() : true;
+}
+
+/**
  * Activates Firebase App Check with ReCaptchaEnterpriseProvider (reCAPTCHA Enterprise / Fraud Defense site key) when VITE_APPCHECK_SITE_KEY is set.
  * Safe to call repeatedly; guarded for non-browser environments.
  */
@@ -90,7 +100,8 @@ export function activateAppCheck(app: FirebaseApp): AppCheck | null {
     shouldUseAppCheckDebug(metaEnv?.DEV === true, metaEnv?.VITE_APPCHECK_DEBUG as string | undefined) &&
     typeof self !== 'undefined'
   ) {
-    (self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean | string }).FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+    (self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean | string }).FIREBASE_APPCHECK_DEBUG_TOKEN =
+      appCheckDebugFlagValue(readEnv('VITE_APPCHECK_DEBUG_TOKEN'));
   }
   try {
     appCheckInstance = initializeAppCheck(app, {
