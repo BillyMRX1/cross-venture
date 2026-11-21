@@ -28,7 +28,14 @@ if (!/^127\.0\.0\.1:8080$|^localhost:8080$/.test(host)) {
   process.exit(2);
 }
 process.env.FIRESTORE_EMULATOR_HOST = host;
-process.env.FIREBASE_AUTH_EMULATOR_HOST = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
+const authHost = process.env.FIREBASE_AUTH_EMULATOR_HOST || 'localhost:9099';
+if (!/^127\.0\.0\.1:9099$|^localhost:9099$/.test(authHost)) {
+  console.error(`SAFETY: auth emulator host ${authHost} is not loopback:9099; refusing`);
+  process.exit(2);
+}
+process.env.FIREBASE_AUTH_EMULATOR_HOST = authHost;
+const firestoreHost = host.split(':')[0];
+const authHostOnly = authHost.split(':')[0];
 
 const envelope = (wsId, uid, extra = {}) => ({
   wsId,
@@ -52,7 +59,8 @@ async function check(name, promise, shouldSucceed) {
 async function main() {
   const testEnv = await initializeTestEnvironment({
     projectId: PROJECT,
-    firestore: { rules, host: 'localhost', port: 8080 },
+    firestore: { rules, host: firestoreHost, port: 8080 },
+    auth: { host: authHostOnly, port: 9099 },
   });
 
   // legacy doc without ownerUid (seeded with rules disabled: models pre-enforcement data)

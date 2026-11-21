@@ -24,12 +24,13 @@ if ! java -version >/dev/null 2>&1; then
   fi
 fi
 
-if [[ ! -d node_modules ]]; then
+if [[ ! -x node_modules/.bin/firebase ]]; then
   echo "installing pinned local dev deps (npm ci)..."
   npm ci --no-audit --no-fund
 fi
 
-# emulators:exec starts loopback emulators, runs the suite, tears the children down.
-npx --yes firebase-tools emulators:exec \
+# Start LOOPBACK emulators, run the suite, tear the children down.
+# Use the LOCAL pinned binary — never npx-remote (version drift + network at test time).
+./node_modules/.bin/firebase emulators:exec \
   --project demo-cv-rules --only firestore,auth --config ./firebase.json \
   "node rules.test.mjs"
