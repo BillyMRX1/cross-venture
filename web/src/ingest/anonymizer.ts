@@ -351,7 +351,7 @@ async function tagWithModel(
       const record = entry as Record<string, unknown>;
       const rawId = String(record.id ?? '');
       const type = record.type;
-      if (!isEntityType(type)) continue;
+      if (!isEntityType(type) || type === 'VALUE') continue;
       const digits = rawId.replace(/[^0-9]/g, '');
       if (!digits) continue;
       const index = Number(digits);
@@ -601,27 +601,31 @@ function sweepValues(
   // Start indices high (9001+): if a downstream digit-parser (e.g. qtyOf on a
   // blinded min_qty_condition) ever reads a VALUE token index as a number, the
   // threshold degrades conservatively (unreachable) instead of eagerly (2, 4...).
+  // Indices also skip numbers that are themselves known collision forms so the
+  // token text can never re-trip the numeric gate (e.g. [VALUE_28] vs '28').
   let valueIndex = 9000;
-  const nextValueToken = (): string => {
-    // Skip index numbers that are themselves known collision forms, so the
-    // token text can never re-trip the numeric gate (e.g. [VALUE_28] vs '28').
-    do {
-      valueIndex += 1;
-    } while (collisionForms.has(String(valueIndex)));
-    return `[VALUE_${valueIndex}]`;
-  };
-  // Longest forms first: '50,25' must be swept before '50' can carve a partial
-  // match out of it (partial sweeps leave post-blinding boundary shifts the gate
-  // still flags).
+  // Longest forms first for deterministic token assignment. Boundaries are
+  // DIGIT-ONLY here (stricter than the gate's): the gate also skips matches
+  // preceded by digit+separator (e.g. '55' in '10.55'), but blinding a NEIGHBOR
+  // of that match flips its boundary post-blinding ('10.55' -> '[VALUE_A].55'
+  // now trips the gate on '55'). Sweeping the superset leaves no gate-visible
+  // literal anywhere and can only over-blind (safe direction).
   for (const form of [...collisionForms].sort((a, b) => b.length - a.length)) {
-    const re = new RegExp(`(?<![0-9])(?<![0-9][.,])${escapeRe(form)}(?![0-9])`, 'g');
+    const re = new RegExp(`(?<![0-9])${escapeRe(form)}(?![0-9])`, 'g');
     for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
       const text = chunks[chunkIdx].text;
       re.lastIndex = 0;
       let match: RegExpExecArray | null;
       while ((match = re.exec(text))) {
-        const token = valueTokenForForm.get(form) ?? nextValueToken();
-        valueTokenForForm.set(form, token);
+        if (overlapsAny(match.index, match.index + match[0].length, rangesByChunk[chunkIdx])) continue;
+        let token = valueTokenForForm.get(form);
+        if (!token) {
+          do {
+            valueIndex += 1;
+          } while (collisionForms.has(String(valueIndex)));
+          token = `[VALUE_${valueIndex}]`;
+          valueTokenForForm.set(form, token);
+        }
         add(chunkIdx, match.index, match.index + match[0].length, match[0], token, 'VALUE');
       }
     }

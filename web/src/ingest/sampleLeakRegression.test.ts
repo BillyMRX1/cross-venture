@@ -57,11 +57,20 @@ describe('sample corpus passes the pre-send privacy gate', () => {
     const a1 = anon.blinded.filter((c) => c.docName === SAMPLES[0]).map((c) => c.text).join('\n');
     expect(a1).toMatch(/orders of \[VALUE_\d+\] units/);
     expect(a1).not.toMatch(/(?<![0-9])(?<![0-9][.,])60(?![0-9])/);
+    // Hygiene: every VALUE token in tokenMap is actually used in blinded text,
+    // every VALUE token maps to a numeric form, and no legend entry is UNKNOWN.
+    const allText = anon.blinded.map((c) => c.text).join('\n');
+    for (const [token, value] of Object.entries(anon.tokenMap)) {
+      if (!token.startsWith('[VALUE_')) continue;
+      expect(allText, `phantom token ${token}`).toContain(token);
+      expect(value).toMatch(/^\d[\d.,]*$/);
+    }
+    expect(legendOf(anon)).not.toContain('UNKNOWN');
   });
 });
 
 describe('decimal-form collisions are fully swept', () => {
-  it('known $50.25 also blinds bare 50 and grouped 50,25', async () => {
+  it('known $50.25 also blinds bare 50 and grouped 50,25 as distinct tokens', async () => {
     const chunks = chunkDocument('synthetic-decimal.md', 'Pay $50.25 now. In another notation: 50,25. Bulk tier starts at 50 units.');
     const anon = await anonymizeChunks(chunks);
     const { payloadLog } = await synthesizeGraph(anon.blinded, legendOf(anon));
@@ -69,6 +78,32 @@ describe('decimal-form collisions are fully swept', () => {
     for (const entry of payloadLog) {
       expect(findLeakedValues(anon.tokenMap, entry.cloudText, 'inspector').hits).toEqual([]);
     }
+    const text = anon.blinded.map((c) => c.text).join('\n');
+    const valueTokens = new Set(text.match(/\[VALUE_\d+\]/g) ?? []);
+    expect(valueTokens.size).toBeGreaterThanOrEqual(2);
+    const values = [...valueTokens].map((t) => anon.tokenMap[t]);
+    expect(new Set(values).size).toBe(valueTokens.size);
+    expect(values).toContain('50,25');
+    expect(values).toContain('50');
+  });
+
+  it('two distinct known values adjacent via a dot do not shift boundaries post-blinding', async () => {
+    // '10%' and '55%' become known; the clause number '10.55' contains both.
+    // The gate skips '55' in the RAW text (preceded by digit+dot) but would
+    // flag it once '10' is blinded — Pass C must blind both.
+    const chunks = chunkDocument('synthetic-adjacent.md', 'Discount cap 10%. Margin floor 55%. See clause 10.55 of the annex.');
+    const anon = await anonymizeChunks(chunks);
+    const { payloadLog } = await synthesizeGraph(anon.blinded, legendOf(anon));
+    expect(payloadLog.length).toBeGreaterThan(0);
+    for (const entry of payloadLog) {
+      expect(findLeakedValues(anon.tokenMap, entry.cloudText, 'inspector').hits).toEqual([]);
+    }
+    const text = anon.blinded.map((c) => c.text).join('\n');
+    // Either both halves are swept as VALUE tokens, or the clause number is
+    // tokenized whole by a value detector — both leave no gate-visible literal.
+    expect(text).toMatch(/clause \[[A-Z_]+_\d+\]/);
+    expect(text).not.toMatch(/(?<![0-9])10(?![0-9])/);
+    expect(text).not.toMatch(/(?<![0-9])55(?![0-9])/);
   });
 });
 
