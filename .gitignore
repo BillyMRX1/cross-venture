@@ -6,3 +6,7 @@ dist/
 .DS_Store
 .firebase/
 firebase-debug.log
+
+# rules-test harness locals
+tools/rules-test/node_modules/
+tools/rules-test/firestore-debug.log
