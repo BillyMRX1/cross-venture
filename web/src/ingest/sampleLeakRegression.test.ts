@@ -122,6 +122,37 @@ describe('decimal-form collisions are fully swept', () => {
   });
 });
 
+describe('overlap losers cannot leak known values (pre-sweep resolution)', () => {
+  it("'15.20' losing to '20.50%' still has its uncovered '15' swept", async () => {
+    // DECIMAL_RE emits '15.20' (len 5), PERCENT_RE emits '20.50%' (len 6) over
+    // overlapping ranges; the loser's stale range must NOT reserve '15' for
+    // Pass C, or literal '15' survives into the prompt next to [DISCOUNT_CAP].
+    const chunks = chunkDocument('synthetic-overlap.md', 'Discount cap 15%. Version 15.20.50%.');
+    const anon = await anonymizeChunks(chunks);
+    const { payloadLog } = await synthesizeGraph(anon.blinded, legendOf(anon));
+    expect(payloadLog.length).toBeGreaterThan(0);
+    for (const entry of payloadLog) {
+      expect(findLeakedValues(anon.tokenMap, entry.cloudText, 'inspector').hits).toEqual([]);
+    }
+    const text = anon.blinded.map((c) => c.text).join('\n');
+    expect(text).not.toMatch(/(?<![0-9])15(?![0-9])/);
+  });
+});
+
+describe('tagger prompt never advertises the internal VALUE type', () => {
+  it('redact-stage prompts exclude VALUE', async () => {
+    const chunks = chunkDocument('synthetic-tagger.md', 'Pay $50.25 now. The margin floor is 55% per order.');
+    await anonymizeChunks(chunks);
+    const redactCalls = vi
+      .mocked(generate)
+      .mock.calls.filter(([stage]) => stage === 'redact');
+    expect(redactCalls.length).toBeGreaterThan(0);
+    for (const [, prompt] of redactCalls) {
+      expect(prompt).not.toContain('VALUE');
+    }
+  });
+});
+
 describe('pre-send gate stays strict (never weaken)', () => {
   it('a hand-crafted prompt leak still blocks the send and nothing is sent', async () => {
     const chunks = chunkDocument('synthetic-leak.md', 'The margin floor is 33% on every order.');

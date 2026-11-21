@@ -339,7 +339,7 @@ async function tagWithModel(
 
   const prompt = [
     'Tag each placeholder with its business entity type.',
-    `Allowed types: ${ENTITY_TYPES.join(', ')}.`,
+    `Allowed types: ${MODEL_ENTITY_TYPES.join(', ')}.`,
     'Return JSON: {"assignments":[{"id":"SPAN_0","type":"COST"}]}',
     'Contexts:',
     ...lines,
@@ -714,11 +714,22 @@ export async function anonymizeChunks(chunks: DocChunk[]): Promise<AnonymizeResu
     if (!candidate.type) candidate.type = 'COST';
   }
 
-  const tokenMap = assignTokens(all);
-  sweepValues(chunks, all, tokenMap);
+  // Resolve per-chunk span overlaps BEFORE token assignment and sweeps: a
+  // candidate that later loses to a longer overlapping span must not reserve a
+  // range in sweepValues — otherwise Pass C skips the dropped span's uncovered
+  // prefix/suffix and a known numeric value can leak into the blinded text
+  // ('15.20' losing to '20.50%' would leave literal '15'). This also stops
+  // dropped sub-matches from getting phantom tokenMap entries.
+  const resolved: Candidate[] = [];
+  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
+    resolved.push(...resolveOverlaps(all.filter((candidate) => candidate.chunkIdx === chunkIdx)));
+  }
+
+  const tokenMap = assignTokens(resolved);
+  sweepValues(chunks, resolved, tokenMap);
 
   const blinded: AnonymizedChunk[] = chunks.map((chunk, chunkIdx) => {
-    const chunkCandidates = all.filter((candidate) => candidate.chunkIdx === chunkIdx);
+    const chunkCandidates = resolved.filter((candidate) => candidate.chunkIdx === chunkIdx);
     const accepted = resolveOverlaps(chunkCandidates);
     const detected: DetectedSpan[] = [];
 
