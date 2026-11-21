@@ -3,7 +3,8 @@
 
 export type EntityType =
   | 'PARTNER' | 'VENTURE' | 'SKU'
-  | 'COST' | 'PRICE' | 'DISCOUNT_CAP' | 'MARGIN_FLOOR';
+  | 'COST' | 'PRICE' | 'DISCOUNT_CAP' | 'MARGIN_FLOOR'
+  | 'VALUE';
 
 export interface DocChunk {
   docName: string;

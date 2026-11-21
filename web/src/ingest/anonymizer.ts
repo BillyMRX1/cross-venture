@@ -33,6 +33,7 @@ const ENTITY_TYPES: EntityType[] = [
   'PRICE',
   'DISCOUNT_CAP',
   'MARGIN_FLOOR',
+  'VALUE',
 ];
 
 const REDACT_SCHEMA: object = {
@@ -46,7 +47,7 @@ const REDACT_SCHEMA: object = {
           id: { type: 'string' },
           type: {
             type: 'string',
-            enum: ENTITY_TYPES,
+            enum: ENTITY_TYPES.filter((t) => t !== 'VALUE'),
           },
         },
         required: ['id', 'type'],
@@ -506,18 +507,6 @@ function sweptEntityType(token: string): EntityType | undefined {
   return type === 'PARTNER' || type === 'VENTURE' || type === 'SKU' ? type : undefined;
 }
 
-/** Any token prefix that is a valid EntityType (including numeric kinds like COST/DISCOUNT_CAP). */
-function tokenEntityType(token: string): EntityType | undefined {
-  const match = /^\[([A-Z][A-Z_]*)(?:_\d+)?(?:#\d+)?\]$/.exec(token);
-  if (!match) return undefined;
-  const type = match[1];
-  return (['PARTNER', 'VENTURE', 'SKU', 'COST', 'PRICE', 'DISCOUNT_CAP', 'MARGIN_FLOOR'] as const).includes(
-    type as 'PARTNER',
-  )
-    ? (type as EntityType)
-    : undefined;
-}
-
 /** Redact further occurrences of full entity values, then partner first/last names. */
 function sweepValues(
   chunks: DocChunk[],
@@ -589,31 +578,55 @@ function sweepValues(
     }
   }
 
-  // Pass C: numeric collision sweep. The pre-send gate (findLeakedValues) flags any
-  // known token value's numeric forms appearing verbatim anywhere in an outbound
+  // Pass C: numeric collision sweep. The fail-closed pre-send gate (findLeakedValues)
+  // flags any known token value's numeric forms appearing verbatim in an outbound
   // prompt — e.g. known '[DISCOUNT_CAP_2]' = '60%' collides with a bare '60 units'
-  // that no value detector tagged. Instead of letting the fail-closed gate block the
-  // whole session, token every literal occurrence of each known numeric value's
-  // forms, using the SAME boundary rule as the gate so the two cannot drift apart.
+  // no detector tagged. Blind each collision occurrence with a NEUTRAL '[VALUE_x]'
+  // token: it claims no semantic type (so the cloud extractor and the local Deal
+  // Simulator cannot bind it to a deal rule), and is minted per exact matched
+  // form (so one token always maps to one literal value). Index numbers skip
+  // known collision forms so token text cannot re-trip the numeric gate.
+  // Boundary regex is shared with the gate (splitNumber/numericForms/escapeRe) so
+  // sweep and gate cannot drift apart.
+  const collisionForms = new Set<string>();
   for (const [token, raw] of Object.entries(tokenMap)) {
-    const type = tokenEntityType(token);
-    if (!type) continue;
+    if (token.startsWith('[VALUE_')) continue;
     const value = (raw ?? '').trim();
     if (value.length < 2) continue;
     const num = splitNumber(value);
     if (num === null || num.int.length < 2) continue;
-    for (const form of numericForms(num.int, num.dec)) {
-      const re = new RegExp(`(?<![0-9])(?<![0-9][.,])${escapeRe(form)}(?![0-9])`, 'g');
-      for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
-        const text = chunks[chunkIdx].text;
-        re.lastIndex = 0;
-        let match: RegExpExecArray | null;
-        while ((match = re.exec(text))) {
-          add(chunkIdx, match.index, match.index + match[0].length, match[0], token, type);
-        }
+    for (const form of numericForms(num.int, num.dec)) collisionForms.add(form);
+  }
+  const valueTokenForForm = new Map<string, string>();
+  // Start indices high (9001+): if a downstream digit-parser (e.g. qtyOf on a
+  // blinded min_qty_condition) ever reads a VALUE token index as a number, the
+  // threshold degrades conservatively (unreachable) instead of eagerly (2, 4...).
+  let valueIndex = 9000;
+  const nextValueToken = (): string => {
+    // Skip index numbers that are themselves known collision forms, so the
+    // token text can never re-trip the numeric gate (e.g. [VALUE_28] vs '28').
+    do {
+      valueIndex += 1;
+    } while (collisionForms.has(String(valueIndex)));
+    return `[VALUE_${valueIndex}]`;
+  };
+  // Longest forms first: '50,25' must be swept before '50' can carve a partial
+  // match out of it (partial sweeps leave post-blinding boundary shifts the gate
+  // still flags).
+  for (const form of [...collisionForms].sort((a, b) => b.length - a.length)) {
+    const re = new RegExp(`(?<![0-9])(?<![0-9][.,])${escapeRe(form)}(?![0-9])`, 'g');
+    for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
+      const text = chunks[chunkIdx].text;
+      re.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = re.exec(text))) {
+        const token = valueTokenForForm.get(form) ?? nextValueToken();
+        valueTokenForForm.set(form, token);
+        add(chunkIdx, match.index, match.index + match[0].length, match[0], token, 'VALUE');
       }
     }
   }
+  for (const [form, token] of valueTokenForForm) tokenMap[token] = form;
 }
 
 // ------------------------------------------------------------------- blinding
