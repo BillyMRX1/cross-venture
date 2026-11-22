@@ -56,7 +56,7 @@ export function isConfigured(): boolean {
  * Default cloud Gemini model name from env or fallback.
  */
 export function cloudModel(): string {
-  return readEnv('VITE_CLOUD_MODEL') ?? 'gemini-2.5-flash';
+  return readEnv('VITE_CLOUD_MODEL') ?? 'gemini-3.8-flash';
 }
 
 /**
