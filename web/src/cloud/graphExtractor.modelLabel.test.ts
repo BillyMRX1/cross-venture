@@ -55,4 +55,11 @@ describe('usedModels honest labeling', () => {
     expect(synth.graph.dealRules.length).toBe(2);
     expect(synth.usedModels).toEqual(['gemini-3.8-flash', 'gemini-3.6-flash']);
   });
+
+  it('pins the empty contract: zero groups -> no models recorded', async () => {
+    generateMock.mockReset();
+    const synth = await synthesizeGraph([], '');
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(synth.usedModels).toEqual([]);
+  });
 });

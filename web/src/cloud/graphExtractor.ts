@@ -273,15 +273,15 @@ export async function synthesizeGraph(
     }
 
     const result = await generate('synthesize', prompt, GRAPH_RESPONSE_SCHEMA, { onRetry: onRetryNotice });
-    // Honest label: record which model actually produced this group's graph
-    // (primary vs opt-in fallback — CEO 2026-11-22 round-6 directive).
-    usedModels.add(result.model);
     const receivedAt = Date.now();
     for (const entry of entries) {
       entry.status = 'responded';
       entry.receivedAt = receivedAt;
     }
     const docGraph = parseGraphResponse(result.text, new Map([[alias, docName]]));
+    // Honest label: record which model actually ANSWERED — only after its reply
+    // parsed (a model whose output is rejected contributed nothing; CEO round-6 directive).
+    usedModels.add(result.model);
 
     merged.ventures.push(...docGraph.ventures);
     merged.partners.push(...docGraph.partners);
