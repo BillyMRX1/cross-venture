@@ -114,6 +114,34 @@ describe('classifyInferenceError', () => {
     );
     expect(sleeps).toEqual([2000]); // exponential, NOT 0ms
   });
+  it('parses "7s" durations, HTTP-date Retry-After (seconds), and rejects empty retryAfter', async () => {
+    const e7s = new Error('slow [429]') as Error & { customCode: number; retryAfter: string };
+    e7s.customCode = 429;
+    e7s.retryAfter = '7s';
+    const c7 = classifyInferenceError(e7s);
+    expect(c7.retryable && c7.retryAfterMs).toBe(7000);
+
+    const future = new Date(Date.now() + 30_000).toUTCString();
+    const eDate = new Error('slow [429]') as Error & { customCode: number; retryAfter: string };
+    eDate.customCode = 429;
+    eDate.retryAfter = future;
+    const cd = classifyInferenceError(eDate);
+    expect(cd.retryable && cd.retryAfterMs !== undefined).toBe(true);
+    // Must be ~30 000 ms, NOT 30 000 000 (unit regression guard).
+    expect(cd.retryable && cd.retryAfterMs! > 20_000 && cd.retryable && cd.retryAfterMs! <= 31_000).toBe(true);
+
+    const eEmpty = new Error('busy [503]') as Error & { status: number; retryAfter: string };
+    eEmpty.status = 503;
+    eEmpty.retryAfter = '';
+    const ce = classifyInferenceError(eEmpty);
+    expect(ce.retryable && ce.retryAfterMs).toBeUndefined();
+
+    const eNeg = new Error('busy [503]') as Error & { status: number; retryDelay: { seconds: number } };
+    eNeg.status = 503;
+    eNeg.retryDelay = { seconds: -5 };
+    const cn = classifyInferenceError(eNeg);
+    expect(cn.retryable && cn.retryAfterMs).toBe(0); // clamped, never negative
+  });
 });
 
 describe('withTransientRetry (fake sleep/rng)', () => {

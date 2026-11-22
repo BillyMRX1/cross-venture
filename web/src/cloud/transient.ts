@@ -65,11 +65,11 @@ function parseNonNegativeNumber(v: unknown): number | undefined {
     // Duration strings like "7s" / "120s" (Google REST RetryInfo style).
     const sm = s.match(/^(\d+(?:\.\d+)?)s$/i);
     if (sm) return Number(sm[1]);
-    // HTTP-date Retry-After.
+    // HTTP-date Retry-After — returned in SECONDS, like every other branch.
     const d = Date.parse(s);
     if (!Number.isNaN(d)) {
       const ms = d - Date.now();
-      return ms > 0 ? ms : 0;
+      return ms > 0 ? ms / 1000 : 0;
     }
     return undefined;
   }
@@ -84,7 +84,10 @@ function retryAfterMsOf(err: unknown): number | undefined {
   if (directMs !== undefined) return directMs;
   const delay = e.retryDelay as { seconds?: number; nanos?: number } | undefined;
   if (delay && (delay.seconds !== undefined || delay.nanos !== undefined)) {
-    return Math.round((delay.seconds ?? 0) * 1000 + (delay.nanos ?? 0) / 1e6);
+    // Clamp negatives/garbage to 0 via the strict parser (never a negative sleep).
+    const secs = parseNonNegativeNumber(delay.seconds ?? 0) ?? 0;
+    const nanos = parseNonNegativeNumber(delay.nanos ?? 0) ?? 0;
+    return Math.round(secs * 1000 + nanos / 1e6);
   }
   // HTTP Retry-After header if the SDK surfaced response headers.
   // NOTE: Headers.get returns NULL when absent — must NOT coerce to 0.
