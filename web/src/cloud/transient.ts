@@ -33,11 +33,46 @@ function numericStatus(err: unknown): number | undefined {
   if (!e) return undefined;
   for (const key of ['customCode', 'status', 'httpStatus', 'code']) {
     const raw = e[key];
-    const n = typeof raw === 'number' ? raw : typeof raw === 'string' ? Number(raw) : NaN;
+    const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN;
     if (Number.isInteger(n) && n >= 100 && n <= 599) return n;
   }
-  const m = messageOf(err).match(/\[(\d{3})\s*\]/);
-  if (m) return Number(m[1]);
+  // firebase/ai AIError shape: numeric HTTP status lives in customErrorData.status
+  // (top-level `code` is a STRING like 'ai/fetch-error').
+  const ced = e.customErrorData as Record<string, unknown> | undefined;
+  if (ced) {
+    const n = Number(ced.status);
+    if (Number.isInteger(n) && n >= 100 && n <= 599) return n;
+  }
+  // Bracketed status in the fetch-error message, with optional statusText:
+  // "[500 ]", "[503 Service Unavailable]", "[429 Too Many Requests]".
+  const m = messageOf(err).match(/\[(\d{3})(?:\s+[^\]]*)?\]/);
+  if (m) {
+    const n = Number(m[1]);
+    if (n >= 100 && n <= 599) return n;
+  }
+  return undefined;
+}
+
+/** Strict non-negative number parse: rejects null/undefined/empty/NaN. */
+function parseNonNegativeNumber(v: unknown): number | undefined {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === 'number') return Number.isFinite(v) && v >= 0 ? v : undefined;
+  if (typeof v === 'string') {
+    const s = v.trim();
+    if (s === '') return undefined;
+    const n = Number(s);
+    if (Number.isFinite(n) && n >= 0) return n;
+    // Duration strings like "7s" / "120s" (Google REST RetryInfo style).
+    const sm = s.match(/^(\d+(?:\.\d+)?)s$/i);
+    if (sm) return Number(sm[1]);
+    // HTTP-date Retry-After.
+    const d = Date.parse(s);
+    if (!Number.isNaN(d)) {
+      const ms = d - Date.now();
+      return ms > 0 ? ms : 0;
+    }
+    return undefined;
+  }
   return undefined;
 }
 
@@ -45,25 +80,23 @@ function retryAfterMsOf(err: unknown): number | undefined {
   const e = err as Record<string, unknown> | null | undefined;
   if (!e) return undefined;
   // gRPC-style retry delay ({ seconds } / { nanos } / plain ms fields).
-  for (const key of ['retryDelayMs', 'retryAfterMs']) {
-    const n = Number(e[key]);
-    if (Number.isFinite(n) && n >= 0) return n;
-  }
+  const directMs = parseNonNegativeNumber(e.retryDelayMs ?? e.retryAfterMs);
+  if (directMs !== undefined) return directMs;
   const delay = e.retryDelay as { seconds?: number; nanos?: number } | undefined;
   if (delay && (delay.seconds !== undefined || delay.nanos !== undefined)) {
     return Math.round((delay.seconds ?? 0) * 1000 + (delay.nanos ?? 0) / 1e6);
   }
   // HTTP Retry-After header if the SDK surfaced response headers.
+  // NOTE: Headers.get returns NULL when absent — must NOT coerce to 0.
   const resp = e.response as { headers?: { get?: (k: string) => string | null } } | undefined;
   const headers = resp?.headers;
   if (headers && typeof headers.get === 'function') {
     const ra = headers.get('Retry-After') ?? headers.get('retry-after');
-    const n = Number(ra);
-    if (Number.isFinite(n) && n >= 0) return n * 1000;
+    const secs = parseNonNegativeNumber(ra);
+    if (secs !== undefined) return secs * 1000;
   }
-  const ra = e.retryAfter;
-  const n = Number(ra);
-  if (Number.isFinite(n) && n >= 0) return n * 1000;
+  const secs = parseNonNegativeNumber(e.retryAfter);
+  if (secs !== undefined) return secs * 1000;
   return undefined;
 }
 

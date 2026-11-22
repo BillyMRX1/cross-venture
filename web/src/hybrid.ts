@@ -6,7 +6,7 @@ import {
   type SchemaRequest,
 } from 'firebase/ai';
 import { cloudModel, cloudModelFallback, getAIInstance, isConfigured, onDeviceModel } from './firebase';
-import { TRANSIENT_BUSY_MESSAGE, TransientExhaustedError, withTransientRetry } from './cloud/transient';
+import { TRANSIENT_BUSY_MESSAGE, TransientExhaustedError, classifyInferenceError, withTransientRetry } from './cloud/transient';
 
 export type InferenceStage = 'redact' | 'query' | 'synthesize';
 
@@ -114,6 +114,12 @@ export async function generate(
           usedModel = fallback;
         } catch (fbErr) {
           if (fbErr instanceof TransientExhaustedError) throw fbErr;
+          const fbInfo = classifyInferenceError(fbErr);
+          if (!fbInfo.retryable) {
+            // Fallback config/auth/model errors must surface honestly —
+            // never dressed up as "Gemini is busy".
+            throw fbErr;
+          }
           throw new TransientExhaustedError(
             `${TRANSIENT_BUSY_MESSAGE} (fallback model also failed)`,
             1,

@@ -104,4 +104,13 @@ describe('generate(synthesize) transient handling', () => {
     expect(h.getModelMock.mock.calls.map((c) => (c[1] as { model?: string }).model))
       .toEqual(['gemini-test', 'gemini-test-fb']);
   }, 15000);
+
+  it('opt-in fallback with a 4xx error surfaces the RAW error, not "busy"', async () => {
+    h.fallback = 'gemini-test-fb-missing';
+    const e404 = new Error('model not found [404]') as Error & { customCode: number };
+    e404.customCode = 404;
+    modelReturning(transient500(), transient500(), e404);
+    const err = await generate('synthesize', 'prompt', {}).catch((e: unknown) => e);
+    expect(err).toBe(e404); // honest surfacing, never dressed as busy
+  }, 15000);
 });

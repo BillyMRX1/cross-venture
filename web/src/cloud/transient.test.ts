@@ -67,6 +67,53 @@ describe('classifyInferenceError', () => {
       reason: 'no-status-not-transient',
     });
   });
+
+  it('catches bracketed statuses WITH statusText (HTTP/1.1 shapes)', () => {
+    const e503 = new Error('Error fetching: [503 Service Unavailable] backend down');
+    expect(classifyInferenceError(e503).retryable).toBe(true);
+    const e429 = new Error('Error fetching: [429 Too Many Requests] slow down');
+    const c429 = classifyInferenceError(e429);
+    expect(c429.retryable && c429.kind).toBe('resource-exhausted-429');
+    const e500hd = new Error('Error fetching: [500 Internal Server Error] ' +
+      'This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.');
+    const c500hd = classifyInferenceError(e500hd);
+    expect(c500hd.retryable && c500hd.kind).toBe('high-demand-500');
+    const e500plain = new Error('Error fetching: [500 Internal Server Error] boom');
+    expect(classifyInferenceError(e500plain).retryable).toBe(false);
+  });
+
+  it('reads firebase/ai AIError shape: status inside customErrorData', () => {
+    const e = new Error('Error fetching from ...:generateContent: This model is currently experiencing high demand. Please try again later.') as Error & {
+      code: string;
+      customErrorData: { status: number };
+    };
+    e.code = 'ai/fetch-error';
+    e.customErrorData = { status: 500 };
+    const c = classifyInferenceError(e);
+    expect(c.retryable && c.kind).toBe('high-demand-500');
+    expect(c.retryable && c.status).toBe(500);
+
+    const e404 = new Error('model not found') as Error & { code: string; customErrorData: { status: number } };
+    e404.code = 'ai/not-found';
+    e404.customErrorData = { status: 404 };
+    expect(classifyInferenceError(e404).retryable).toBe(false);
+  });
+
+  it('a Headers.get returning null does NOT short-circuit backoff (no 0ms retry)', async () => {
+    const err = new Error('busy [500 ] high demand, please try again later') as Error & {
+      customErrorData: { status: number };
+      response: { headers: { get: (k: string) => string | null } };
+    };
+    err.customErrorData = { status: 500 };
+    err.response = { headers: { get: () => null } };
+    const sleeps: number[] = [];
+    let calls = 0;
+    await withTransientRetry(
+      async () => { calls += 1; if (calls < 2) throw err; return 'ok'; },
+      { sleep: async (ms) => { sleeps.push(ms); }, rng: () => 0 },
+    );
+    expect(sleeps).toEqual([2000]); // exponential, NOT 0ms
+  });
 });
 
 describe('withTransientRetry (fake sleep/rng)', () => {
