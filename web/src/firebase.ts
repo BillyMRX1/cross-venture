@@ -60,6 +60,15 @@ export function cloudModel(): string {
 }
 
 /**
+ * Opt-in cloud fallback model (empty by default). Used ONLY after the primary
+ * model's bounded transient retries are exhausted; never enabled without an
+ * explicit env setting. Model ids must come from the AI Logic model list.
+ */
+export function cloudModelFallback(): string {
+  return readEnv('VITE_CLOUD_MODEL_FALLBACK') ?? '';
+}
+
+/**
  * Default on-device Gemini Nano model label from env or fallback.
  */
 export function onDeviceModel(): string {

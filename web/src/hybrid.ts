@@ -5,7 +5,8 @@ import {
   type GenerativeModel,
   type SchemaRequest,
 } from 'firebase/ai';
-import { cloudModel, getAIInstance, isConfigured, onDeviceModel } from './firebase';
+import { cloudModel, cloudModelFallback, getAIInstance, isConfigured, onDeviceModel } from './firebase';
+import { TRANSIENT_BUSY_MESSAGE, TransientExhaustedError, withTransientRetry } from './cloud/transient';
 
 export type InferenceStage = 'redact' | 'query' | 'synthesize';
 
@@ -74,7 +75,8 @@ function toErrorMessage(err: unknown): string {
 export async function generate(
   stage: InferenceStage,
   prompt: string,
-  jsonSchema?: object
+  jsonSchema?: object,
+  opts?: { onRetry?: (attempt: number, waitMs: number, kind: string) => void }
 ): Promise<GenResult> {
   if (stage === 'synthesize') {
     const ai = await getAIInstance();
@@ -92,11 +94,40 @@ export async function generate(
       model: modelName,
       generationConfig,
     });
-    const result = await model.generateContent(prompt);
+    // Bounded transient handling (CEO 2026-11-22): 500 high-demand / 503 / 429
+    // only, exponential backoff + jitter, max 3 total calls per payload.
+    // Auth/model 4xx errors are never retried.
+    let result: Awaited<ReturnType<GenerativeModel['generateContent']>>;
+    let usedModel = modelName;
+    try {
+      result = await withTransientRetry(() => model.generateContent(prompt), {
+        maxAttempts: 3,
+        onRetry: opts?.onRetry,
+      });
+    } catch (err) {
+      const fallback = cloudModelFallback();
+      if (err instanceof TransientExhaustedError && fallback && fallback !== modelName) {
+        // Opt-in fallback (default OFF): exactly one attempt on the fallback model.
+        try {
+          const fbModel = getGenerativeModel(ai, { model: fallback, generationConfig });
+          result = await fbModel.generateContent(prompt);
+          usedModel = fallback;
+        } catch (fbErr) {
+          if (fbErr instanceof TransientExhaustedError) throw fbErr;
+          throw new TransientExhaustedError(
+            `${TRANSIENT_BUSY_MESSAGE} (fallback model also failed)`,
+            1,
+            fbErr,
+          );
+        }
+      } else {
+        throw err;
+      }
+    }
     return {
       text: result.response.text(),
       usedOnDevice: false,
-      model: modelName,
+      model: usedModel,
     };
   }
 

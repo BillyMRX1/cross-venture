@@ -206,7 +206,8 @@ function buildPrompt(chunks: AnonymizedChunk[], tokenLegend: string, alias: stri
 export async function synthesizeGraph(
   blinded: AnonymizedChunk[],
   tokenLegend: string,
-  onPayload?: (entry: PayloadLogEntry) => void
+  onPayload?: (entry: PayloadLogEntry) => void,
+  onRetryNotice?: (attempt: number, waitMs: number, kind: string) => void
 ): Promise<{ graph: KnowledgeGraph; payloadLog: PayloadLogEntry[] }> {
   const groups = new Map<string, AnonymizedChunk[]>();
   for (const chunk of blinded) {
@@ -270,7 +271,7 @@ export async function synthesizeGraph(
       onPayload?.(entry);
     }
 
-    const result = await generate('synthesize', prompt, GRAPH_RESPONSE_SCHEMA);
+    const result = await generate('synthesize', prompt, GRAPH_RESPONSE_SCHEMA, { onRetry: onRetryNotice });
     const receivedAt = Date.now();
     for (const entry of entries) {
       entry.status = 'responded';
