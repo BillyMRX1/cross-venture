@@ -131,7 +131,7 @@ export function mountIngest(root: HTMLElement): void {
           (attempt, waitMs) => setStage('synthesize', 'run',
             `Gemini is busy, retrying… (attempt ${attempt} of 3 failed, waiting ~${Math.max(1, Math.round(waitMs / 1000))}s)`));
         graph = synth.graph;
-        setStage('synthesize', 'ok', `${graph.ventures.length} venture(s) · ${graph.products.length} SKU(s) · ${graph.dealRules.length} rule(s) · ${log.length} payload(s) logged`);
+        setStage('synthesize', 'ok', `${graph.ventures.length} venture(s) · ${graph.products.length} SKU(s) · ${graph.dealRules.length} rule(s) · ${log.length} payload(s) logged · model(s): ${synth.usedModels.join(' + ')}`);
       } catch (e) {
         const blocked = e instanceof PayloadBlockedError;
         setStage('synthesize', 'err', blocked

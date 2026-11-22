@@ -208,7 +208,7 @@ export async function synthesizeGraph(
   tokenLegend: string,
   onPayload?: (entry: PayloadLogEntry) => void,
   onRetryNotice?: (attempt: number, waitMs: number, kind: string) => void
-): Promise<{ graph: KnowledgeGraph; payloadLog: PayloadLogEntry[] }> {
+): Promise<{ graph: KnowledgeGraph; payloadLog: PayloadLogEntry[]; usedModels: string[] }> {
   const groups = new Map<string, AnonymizedChunk[]>();
   for (const chunk of blinded) {
     const existing = groups.get(chunk.docName);
@@ -226,6 +226,7 @@ export async function synthesizeGraph(
     dealRules: [],
   };
   const payloadLog: PayloadLogEntry[] = [];
+  const usedModels = new Set<string>();
 
   // Known real values from detection (local-only source of truth). None of them
   // may appear verbatim in an outbound prompt — enforced before every send.
@@ -272,6 +273,9 @@ export async function synthesizeGraph(
     }
 
     const result = await generate('synthesize', prompt, GRAPH_RESPONSE_SCHEMA, { onRetry: onRetryNotice });
+    // Honest label: record which model actually produced this group's graph
+    // (primary vs opt-in fallback — CEO 2026-11-22 round-6 directive).
+    usedModels.add(result.model);
     const receivedAt = Date.now();
     for (const entry of entries) {
       entry.status = 'responded';
@@ -285,5 +289,5 @@ export async function synthesizeGraph(
     merged.dealRules.push(...docGraph.dealRules);
   }
 
-  return { graph: merged, payloadLog };
+  return { graph: merged, payloadLog, usedModels: [...usedModels] };
 }
