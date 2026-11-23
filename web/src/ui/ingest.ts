@@ -40,9 +40,18 @@ export function mountIngest(root: HTMLElement): void {
   let running = false;
   const stageEls = new Map<StageId, { li: HTMLLIElement; note: HTMLElement }>();
 
+  // Hero framing for the demo's first screen (CEO UI/UX polish 2026-11-23).
+  const hero = el(
+    'div',
+    {},
+    el('h2', { class: 'hero-head' }, 'Build your deal workspace'),
+    el('p', { class: 'hero-sub' }, 'Drop in contracts, notes and cost sheets. Five stages run on this device first; only blinded tokens ever reach the cloud stage, and the model that answered is always shown.'),
+  );
+
   const stageList = el('ul', { class: 'stages' });
   for (const s of STAGES) {
-    const note = el('div', { class: 'note-wrap hint', text: s.blurb });
+    const note = el('div', { class: 'note', id: `note-${s.id}` });
+    note.textContent = s.blurb;
     const li = el('li', { class: 'stage', id: `stage-${s.id}` }, el('span', { class: 'dot' }), el('span', { class: 'label' }, s.label), note);
     stageEls.set(s.id, { li, note });
     stageList.append(li);
@@ -63,6 +72,9 @@ export function mountIngest(root: HTMLElement): void {
         entry.note.textContent = s.blurb;
       }
     }
+    modelChip.textContent = '';
+    wsStats.replaceChildren();
+    wsSummary.hidden = true;
   }
 
   /* ---------- pipeline ---------- */
@@ -132,6 +144,8 @@ export function mountIngest(root: HTMLElement): void {
             `Gemini is busy, retrying… (attempt ${attempt} of 3 failed, waiting ~${Math.max(1, Math.round(waitMs / 1000))}s)`));
         graph = synth.graph;
         setStage('synthesize', 'ok', `${graph.ventures.length} venture(s) · ${graph.products.length} SKU(s) · ${graph.dealRules.length} rule(s) · ${log.length} payload(s) logged${synth.usedModels.length ? ` · model(s): ${synth.usedModels.join(' + ')}` : ''}`);
+        // Honest attribution stays visible in the card header, not just the line.
+        modelChip.textContent = synth.usedModels.length ? `model: ${synth.usedModels.join(' + ')}` : '';
       } catch (e) {
         const blocked = e instanceof PayloadBlockedError;
         setStage('synthesize', 'err', blocked
@@ -157,6 +171,15 @@ export function mountIngest(root: HTMLElement): void {
       } catch (e) {
         setStage('save', 'skip', `Not persisted: ${errText(e)}`);
       }
+
+      // Result summary: numbers the pipeline already proved on screen.
+      wsStats.replaceChildren(
+        statCell('Documents', texts.length),
+        statCell('Chunks', chunks.length),
+        statCell('Typed tokens', Object.keys(anon.tokenMap).length),
+        statCell('Graph entries', graph.ventures.length + graph.products.length + graph.dealRules.length),
+      );
+      wsSummary.hidden = false;
 
       store.setWorkspace(ws);
       const full = graph.ventures.length > 0;
@@ -265,6 +288,20 @@ export function mountIngest(root: HTMLElement): void {
 
   /* ---------- layout ---------- */
 
+  const modelChip = el('span', { class: 'model-chip', 'aria-live': 'polite' });
+  const wsStats = el('div', { class: 'stats' });
+  const wsSummary = el(
+    'div',
+    { class: 'ws-summary' },
+    el('div', { class: 'summary-head' }, el('h2', {}, 'Workspace result')),
+    wsStats,
+  );
+  wsSummary.hidden = true;
+
+  function statCell(k: string, v: number): HTMLElement {
+    return el('div', { class: 'stat' }, el('span', { class: 'stat-k' }, k), el('span', { class: 'stat-v' }, v.toLocaleString()));
+  }
+
   const filesCard = el(
     'div',
     { class: 'card' },
@@ -294,13 +331,15 @@ export function mountIngest(root: HTMLElement): void {
   const progressCard = el(
     'div',
     { class: 'card' },
-    el('h2', {}, 'Pipeline'),
-    el('p', {}, 'Local stages run first; only blinded tokens reach the cloud stage. Errors degrade visibly instead of crashing.'),
+    el('div', { class: 'card-head' }, el('h2', {}, 'Pipeline'), modelChip),
+    el('p', { class: 'hero-sub' }, 'Local stages run first; only blinded tokens reach the cloud stage. Errors degrade visibly instead of crashing.'),
     stageList,
+    wsSummary,
     el('div', { class: 'card-toolbar' }, statusLine),
   );
 
   root.replaceChildren(
+    hero,
     el('div', { class: 'grid-2' }, filesCard, pasteCard),
     sampleCard,
     progressCard,

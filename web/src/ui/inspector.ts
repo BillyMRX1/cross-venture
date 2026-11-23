@@ -169,9 +169,9 @@ function emptyState(): HTMLElement {
   const box = el(
     'div',
     { class: 'empty' },
-    el('h2', {}, 'No workspace yet'),
-    el('p', {}, 'Ingest documents first — the Inspector needs the local chunks and the exact payloads the cloud call produced.'),
-    el('button', { class: 'btn btn-primary' }, 'Go to Ingest'),
+    el('h2', { class: 'hero-head' }, 'No workspace yet'),
+    el('p', { class: 'hero-sub' }, 'Ingest documents first — the Inspector needs the local chunks and the exact payloads the cloud call produced.'),
+    el('div', { class: 'cta-row' }, el('button', { class: 'btn btn-primary' }, 'Go to Ingest')),
   );
   box.querySelector('button')?.addEventListener('click', () => goTab('ingest'));
   return box;
