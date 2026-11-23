@@ -36,6 +36,12 @@ describe('design-token contract', () => {
     expect(literals, `font-size must use var(--f-*): ${literals.join(' | ')}`).toEqual([]);
   });
 
+  it('comments are well-formed (no mid-text /*-style early close)', () => {
+    const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
+    const stray = stripped.match(/\/\*|\*\//g) ?? [];
+    expect(stray, `stray comment delimiters left after stripping (a "--x-*/" inside a comment closes it early): ${stray.join(' ')}`).toEqual([]);
+  });
+
   it('supports prefers-reduced-motion', () => {
     expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
   });

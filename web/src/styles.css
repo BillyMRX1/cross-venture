@@ -3,8 +3,8 @@
    Vanilla CSS. Light + dark via prefers-color-scheme.
    Token contract pinned by src/ui/styles.lint.test.ts:
    hex colors live ONLY in :root token blocks; every font-size
-   uses var(--f-*); motion uses var(--t-*/--ease); reduced
-   motion respected.
+   uses a var(--f-...) token; motion uses var(--t-fast), var(--t-med)
+   and var(--ease); reduced motion respected.
    ============================================================ */
 
 :root {
