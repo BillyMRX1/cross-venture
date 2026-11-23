@@ -48,6 +48,17 @@ export function mountIngest(root: HTMLElement): void {
     el('p', { class: 'hero-sub' }, 'Drop in contracts, notes and cost sheets. Five stages run on this device first; only blinded tokens ever reach the cloud stage, and the model that answered is always shown.'),
   );
 
+  // Result-summary elements declared before resetStages so no forward reference.
+  const modelChip = el('span', { class: 'model-chip', 'aria-live': 'polite' });
+  const wsStats = el('div', { class: 'stats' });
+  const wsSummary = el(
+    'div',
+    { class: 'ws-summary' },
+    el('div', { class: 'summary-head' }, el('h2', {}, 'Workspace result')),
+    wsStats,
+  );
+  wsSummary.hidden = true;
+
   const stageList = el('ul', { class: 'stages' });
   for (const s of STAGES) {
     const note = el('div', { class: 'note', id: `note-${s.id}` });
@@ -287,16 +298,6 @@ export function mountIngest(root: HTMLElement): void {
   });
 
   /* ---------- layout ---------- */
-
-  const modelChip = el('span', { class: 'model-chip', 'aria-live': 'polite' });
-  const wsStats = el('div', { class: 'stats' });
-  const wsSummary = el(
-    'div',
-    { class: 'ws-summary' },
-    el('div', { class: 'summary-head' }, el('h2', {}, 'Workspace result')),
-    wsStats,
-  );
-  wsSummary.hidden = true;
 
   function statCell(k: string, v: number): HTMLElement {
     return el('div', { class: 'stat' }, el('span', { class: 'stat-k' }, k), el('span', { class: 'stat-v' }, v.toLocaleString()));

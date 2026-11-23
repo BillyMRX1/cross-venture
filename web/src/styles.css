@@ -61,6 +61,7 @@
   --radius-sm: 7px;
   --shadow: 0 1px 2px rgb(23 32 44 / 8%), 0 4px 14px rgb(23 32 44 / 7%);
   --shadow-lift: 0 2px 4px rgb(23 32 44 / 10%), 0 10px 26px rgb(23 32 44 / 14%);
+  --shadow-edge: 0 1px 2px rgb(23 32 44 / 4%);
   --gap: var(--sp-4);
 }
 
@@ -90,6 +91,7 @@
     --cloud-accent: #5aa2ff;
     --shadow: 0 1px 2px rgb(0 0 0 / 45%), 0 6px 18px rgb(0 0 0 / 35%);
     --shadow-lift: 0 2px 6px rgb(0 0 0 / 55%), 0 12px 30px rgb(0 0 0 / 45%);
+    --shadow-edge: 0 1px 2px rgb(0 0 0 / 30%);
   }
 }
 
@@ -169,7 +171,7 @@ a {
   z-index: 40;
   background: var(--bg-card);
   border-bottom: 1px solid var(--border);
-  box-shadow: 0 1px 2px rgb(23 32 44 / 4%);
+  box-shadow: var(--shadow-edge);
 }
 
 .topbar-in {
@@ -272,12 +274,6 @@ a {
   color: var(--warn);
   background: var(--warn-bg);
   border-color: var(--warn-border);
-}
-
-.chip--danger {
-  color: var(--danger);
-  background: var(--danger-bg);
-  border-color: var(--danger-border);
 }
 
 /* honest model attribution pill (never hide which model answered) */
@@ -472,6 +468,20 @@ main[hidden] {
   display: none;
 }
 
+.ws-summary .summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-3);
+}
+
+.ws-summary .summary-head h2 {
+  margin: 0;
+  font-size: var(--f-md);
+}
+
 .stats {
   display: flex;
   gap: var(--sp-2);
@@ -512,12 +522,7 @@ main[hidden] {
   padding: var(--sp-4) 18px;
 }
 
-.card--soft {
-  background: var(--bg-soft);
-}
-
 .card > h2 + p,
-.card > h2 + .sub,
 .card > .hero-sub {
   color: var(--text-dim);
   font-size: var(--f-sm);
@@ -648,10 +653,6 @@ input[type="file"] {
   filter: brightness(1.08);
 }
 
-.btn-ghost {
-  background: transparent;
-}
-
 .btn-sm {
   padding: 6px 10px;
   font-size: var(--f-xs);
@@ -734,11 +735,6 @@ input[type="file"] {
   margin-top: 2px;
 }
 
-.stage .note .model-chip {
-  margin-left: var(--sp-1);
-  vertical-align: 1px;
-}
-
 .stage--run {
   border-color: var(--accent);
   background: var(--bg-card);
@@ -790,12 +786,6 @@ input[type="file"] {
 @keyframes spin {
   to {
     transform: rotate(360deg);
-  }
-}
-
-@keyframes pulse {
-  50% {
-    opacity: 0.35;
   }
 }
 

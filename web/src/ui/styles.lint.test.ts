@@ -19,7 +19,7 @@ describe('design-token contract', () => {
   it('defines the full token scales', () => {
     for (const t of ['--f-2xs', '--f-xs', '--f-sm', '--f-base', '--f-md', '--f-lg', '--f-xl', '--f-stat',
                      '--sp-1', '--sp-2', '--sp-3', '--sp-4', '--sp-5', '--sp-6',
-                     '--t-fast', '--t-med', '--ease', '--shadow-lift']) {
+                     '--t-fast', '--t-med', '--ease', '--shadow-lift', '--shadow-edge']) {
       expect(css, `token ${t} must be defined in a token block`).toContain(`${t}:`);
     }
   });
@@ -47,8 +47,8 @@ describe('class-hook contract', () => {
   const required = [
     // pre-existing hooks (inventory 2026-11-23)
     'badge', 'banner', 'banner--fail', 'banner--info', 'banner--muted', 'banner--pass', 'banner--offline',
-    'boot-error', 'btn', 'btn-primary', 'btn-run', 'btn-sm', 'btn-ghost', 'card', 'card--soft', 'card-toolbar',
-    'chip', 'chip--ok', 'chip--warn', 'chip--danger', 'chip--muted', 'cite', 'cite-excerpt', 'cite-note',
+    'boot-error', 'btn', 'btn-primary', 'btn-run', 'btn-sm', 'card', 'card-toolbar', 'card-head',
+    'chip', 'chip--ok', 'chip--warn', 'chip--muted', 'cite', 'cite-excerpt', 'cite-note',
     'cite-src', 'code', 'dot', 'draft', 'draft-head', 'empty', 'field', 'field-row', 'grid-2', 'hint',
     'insp-cols', 'k', 'label', 'note', 'note--err', 'note--warn', 'note--ok', 'pairing', 'payload',
     'payload--cloud', 'payload-block', 'ph', 'query-chip', 'rule-strip', 'rule-tile', 'stage', 'stages',
@@ -58,9 +58,15 @@ describe('class-hook contract', () => {
     'brand-sub', 'chips', 'tabs', 'tab', 'panel', 'wrap', 'skip-link', 'col-head', 'col-head--local',
     'col-head--cloud',
     // new hero hooks (2026-11-23 polish)
-    'model-chip', 'ws-summary', 'stat', 'stat-k', 'stat-v', 'hero-head', 'hero-sub', 'cta-row',
+    'model-chip', 'ws-summary', 'summary-head', 'stats', 'stat', 'stat-k', 'stat-v',
+    'hero-head', 'hero-sub', 'cta-row',
+    // verdict badges + stage states rendered via lookups/templates
+    'badge--approved', 'badge--signoff', 'badge--breach',
   ];
   it.each(required)('.%s has a rule in styles.css', (cls: string) => {
-    expect(css, `missing selector for .${cls}`).toContain(`.${cls}`);
+    // Selector-position match with an identifier boundary: a renamed class
+    // (.hero-head -> .hero-head-bogus) must NOT satisfy the hook for .hero-head.
+    const re = new RegExp(`\\.${cls}(?![\\w-])`);
+    expect(css, `missing selector for .${cls}`).toMatch(re);
   });
 });
