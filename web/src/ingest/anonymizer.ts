@@ -23,6 +23,9 @@ interface Candidate {
   kind: SpanKind;
   type?: EntityType;
   token?: string;
+  // Override for the value-dedupe key (spelled-out amount phrases: they must
+  // share one token with the parenthesised figure they annotate).
+  key?: string;
 }
 
 const ENTITY_TYPES: EntityType[] = [
@@ -87,6 +90,11 @@ const VENTURE_PAREN_RE =
   /(?:^|[^\w])([A-Z][A-Za-z'&.-]*(?:\s+[A-Z][A-Za-z'&.-]*){1,3})\s*\(\s*["'](?:the )?(?:Company|Venture|Partnership|Business)/g;
 const VENTURE_THE_RE =
   /the ([A-Z][A-Za-z'&.-]*(?:\s+[A-Z][A-Za-z'&.-]*){1,3}) (?:venture|company|partnership|studio|business)/g;
+// Defined short alias of a company: (the "Company" or "RoastLab"), ("Brightwell").
+// The alias is the name in everyday use across the rest of the contract.
+const VENTURE_ALIAS_RE =
+  /\(\s*(?:the\s+)?(?:["“][A-Za-z ]+["”]\s*,?\s*or\s+)?(?:the\s+)?["“]([A-Z][A-Za-z0-9&'.-]*[a-z][A-Za-z0-9&'.-]*(?:\s+[A-Z][A-Za-z0-9&'.-]*){0,3})["”]\s*\)/g;
+const VENTURE_ALIAS_GENERIC: ReadonlySet<string> = new Set(['company','venture','partnership','business','agreement','distributor','client','consultant','supplier','buyer','seller','partner','partners','party','parties','member','members','effective date','territory','products','services','licensor','licensee','purchaser','vendor','customer','contractor','manager','board']);
 const VENTURE_COOWNED_RE =
   /([A-Z][A-Za-z'&.-]*(?:\s+[A-Z][A-Za-z'&.-]*){1,3})\s+(?:is|was)?\s*[^.]{0,60}?[Cc]o-owned/g;
 const SKU_PREFIX_RE =
@@ -111,6 +119,82 @@ function isSkuLabel(value: string): boolean {
   return SKU_LABEL_RE.test(t) || SKU_LABEL_PHRASES.has(t.toLowerCase());
 }
 
+// Legal-entity suffixes (real PDFs, 2026-11-25): "Atelier Emily LLC" was
+// captured as SKU "Atelier Emily" + loose "LLC". A name ending in one of
+// these suffixes is a VENTURE, whole span including the suffix; and a SKU
+// capture that is immediately followed by such a suffix is rejected.
+// Case-sensitive on purpose: 'Inc\.?' must not fire on "included".
+const ENTITY_SUFFIX = String.raw`LLC|L\.L\.C\.|Inc\.?|Ltd\.?|Pte\.?\s+Ltd\.?|AB|GmbH|PT|Corp\.?|Co\.|S\.A\.|B\.V\.`;
+const SUFFIX_AFTER_RE = new RegExp(String.raw`^\s*(?:${ENTITY_SUFFIX})(?![A-Za-z])`);
+// A SKU capture whose own tail is the suffix ("The Willowmere Holdings LLC"
+// greedily before "SKUs") is the company, not a product.
+const SUFFIX_VALUE_RE = new RegExp(String.raw`(?:${ENTITY_SUFFIX})$`);
+const VENTURE_SUFFIX_RE = new RegExp(
+  // (?!The |A |An ) — the greedy name part must not swallow a leading
+  // article: "The Willowmere Holdings LLC" must capture "Willowmere Holdings LLC".
+  String.raw`\b((?!The[ \t]|An?[ \t])[A-Z][A-Za-z'&.-]*(?:\s+[A-Z][A-Za-z'&.-]*){1,5}\s+(?:${ENTITY_SUFFIX}))(?![A-Za-z])`,
+  'g',
+);
+
+// Person names in prose and signature blocks (real PDFs, 2026-11-25): names
+// without a role keyword leaked ("...sign-off from Emily Vance...").
+// Context-sensitive on purpose — a bare First Last sweep would tag addresses,
+// headings and company names. Names stay capitalized words (see the
+// PARTNER_WITH_RE note above). People detected here are tagged PARTNER:
+// types.ts is a frozen contract and has no PERSON type, and the PARTNER
+// first/last-word sweep plus gate check gives the strongest coverage.
+const PERSON_NAME = String.raw`([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)`;
+const PERSON_SEP = String.raw`(?:[ \t]+|[ \t]*[:—–-][*"'’\s]*)`;
+const PERSON_PROSE_RE = new RegExp(
+  String.raw`\b(?:[Mm]anaging [Mm]ember|[Mm]ember|[Dd]irector|[Pp]resident|CEO|CFO|COO|[Ff]rom|[Tt]o|[Ww]ith|[Bb]y)${PERSON_SEP}${PERSON_NAME}`,
+  'g',
+);
+const PERSON_BLOCK_RE = new RegExp(
+  String.raw`\b(?:By|Name|Title|Chair)[ \t]*:[ \t*"'\s]*${PERSON_NAME}`,
+  'g',
+);
+const PERSON_HONORIFIC_RE = new RegExp(
+  String.raw`\b(?:Mr|Mrs|Ms|Dr|Prof)\.?[ \t]+${PERSON_NAME}`,
+  'g',
+);
+
+// A captured "name" made only of structural/role words is a title, not a
+// person ("Title: Managing Member"), and function words after to/from/by are
+// prose, not names ("from the current supplier" is already safe via case,
+// this guards the capitalized edges).
+const PERSON_STOP_WORDS: ReadonlySet<string> = new Set([
+  'the', 'this', 'that', 'these', 'those', 'current', 'new', 'sole', 'only',
+  'same', 'other', 'others', 'both', 'each', 'every', 'any', 'all', 'now',
+  'here', 'above', 'below', 'following', 'company', 'business', 'partnership',
+  'venture', 'agreement', 'contract', 'invoice', 'order', 'payment',
+  'account', 'client', 'customer', 'buyer', 'seller', 'supplier', 'product',
+  'price', 'cost', 'rate', 'fee', 'month', 'months', 'day', 'days', 'week',
+  'weeks', 'year', 'years', 'section', 'clause', 'schedule', 'page', 'form',
+  'table', 'figure', 'managing', 'member', 'director', 'president', 'chief',
+  'officer', 'head', 'lead', 'manager', 'chair', 'chairperson', 'witness',
+  'founder', 'owner', 'partner', 'ceo', 'cfo', 'coo',
+]);
+
+function isPersonStop(value: string): boolean {
+  return value
+    .trim()
+    .split(/\s+/)
+    .some((word) => PERSON_STOP_WORDS.has(word.toLowerCase().replace(/[^a-z]/g, '')));
+}
+
+// Spelled-out amounts (real PDFs, 2026-11-25): "Two Hundred Fifty Thousand
+// Dollars ([COST_3])" — the digits got a token, the phrase did not. A number
+// word run counts as an amount only with a currency/percent tail or a
+// parenthesised figure, so durations ("fourteen days", "sixty days") stay
+// literal. The phrase and the figure share one token via Candidate.key.
+const SPELL_WORD = String.raw`thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundreds?|thousands?|millions?|billions?|one|two|three|four|five|six|seven|eight|nine`;
+const SPELL_SEQ = String.raw`(?:${SPELL_WORD})(?:[ \t-]+(?:and[ \t-]+)?(?:${SPELL_WORD}))*`;
+const SPELL_TAIL = String.raw`us dollars?|dollars?|usd|rupiahs?|euros?|pounds?|percent|persen`;
+const SPELL_AMOUNT_RE = new RegExp(
+  String.raw`\b(${SPELL_SEQ})(?=[ \t]+(?:${SPELL_TAIL})(?![a-z])|[ \t]*\()([ \t]+(?:${SPELL_TAIL})(?![A-Za-z]))?([ \t]*\(\s*(?:usd|idr|eur|gbp|sgd|rupiah|rp\.?)?\s*[\d,.]+%?\s*\))?`,
+  'gi',
+);
+
 const MONEY_CONTEXT_RE =
   /(cost|cogs|modal|harga|retail|price|sell|jual|rate|fee|budget|spend|profit|revenue|margin)/;
 
@@ -128,19 +212,32 @@ function collectExclusions(text: string): Range[] {
   pushRanges(ranges, text, /\bSection\s+\d+(?:\.\d+)*/gi);
   pushRanges(ranges, text, /-{3,}\s*page\s+\d+\s*-{3,}/gi);
   pushRanges(ranges, text, /^[ \t]*page[ \t]+\d+[ \t]*$/gim);
+  pushRanges(ranges, text, /\bpage[ \t]+\d+[ \t]+of[ \t]+\d+\b/gi);
   pushRanges(ranges, text, /\b(?:19|20)\d{2}-\d{2}-\d{2}\b/g);
   pushRanges(ranges, text, /\b\d[\d,]*\s?(?:units?|pcs|pieces|items|orders)\b/gi);
 
-  // Years used as dates (month-name nearby) are not money.
+  // Document identifiers: alnum-hyphen codes with letters AND digits
+  // ("NS-MSA-7-V2") are structure, not business figures.
+  pushRanges(
+    ranges,
+    text,
+    /\b(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9-]*\d)[A-Z0-9]+(?:-[A-Z0-9]+)+\b/g,
+  );
+
+  // Years used as dates (month-name nearby, or glued to a date preposition:
+  // "dated in 2019") are not money.
   const months =
     /(January|February|March|April|May|June|July|August|September|October|November|December)/i;
+  const yearLead =
+    /\b(?:in|since|during|until|through|from|to|effective|before|after|late|early|year)[ \t]+$/i;
   const yearRe = /\b(?:19|20)\d{2}\b/g;
   yearRe.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = yearRe.exec(text))) {
     const from = Math.max(0, match.index - 12);
     const to = Math.min(text.length, match.index + match[0].length + 12);
-    if (months.test(text.slice(from, to))) {
+    const lead = text.slice(Math.max(0, match.index - 16), match.index);
+    if (months.test(text.slice(from, to)) || yearLead.test(lead)) {
       ranges.push({ start: match.index, end: match.index + match[0].length });
     }
   }
@@ -178,18 +275,19 @@ function addCaptureMatches(
   chunkIdx: number,
   exclusions: Range[],
   type: EntityType,
-  reject?: (value: string) => boolean,
+  reject?: (value: string, after: string) => boolean,
 ): void {
   re.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
     const value = match[1];
-    if (!value || (reject !== undefined && reject(value))) continue;
-    const offset = match[0].indexOf(value);
-    if (offset < 0) continue;
+    const offset = match[0].indexOf(value ?? '');
+    if (!value || offset < 0) continue;
     const start = match.index + offset;
     const end = start + value.length;
     if (overlapsAny(start, end, exclusions)) continue;
+    const after = text.slice(end, Math.min(text.length, end + 24));
+    if (reject !== undefined && reject(value, after)) continue;
     out.push({ chunkIdx, start, end, text: value, kind, type });
   }
 }
@@ -219,8 +317,99 @@ function addBareIntegerMoney(
 
     const following = text.slice(end, Math.min(text.length, end + 24));
     if (/^\s*(?:units?|pcs|pieces|items|pages|orders)\b/i.test(following)) continue;
+    // Quantities glued to a measurement unit ("40 kg", "5-kilogram",
+    // "14 days") are physical amounts, not business figures — even when the
+    // line happens to carry a money keyword. A currency marker glued to the
+    // number never reaches here (the money regexes own that span).
+    if (
+      /^\s*-?\s*(?:km|kg|kilograms?|kilos?|cm|mm|mg|ml|cl|grams?|g|liters?|litres?|metres?|meters?|m|months?|weeks?|days?|hours?|minutes?|seconds?)(?![a-z])/i.test(
+        following,
+      )
+    ) {
+      continue;
+    }
 
     out.push({ chunkIdx, start, end, text: match[0], kind: 'MONEY' });
+  }
+}
+
+// Spelled-out amount phrase + its parenthesised figure -> TWO candidates
+// (phrase span, figure span) sharing Candidate.key, so assignTokens mints
+// ONE token for both and the digits stay a real numeric span for the Pass C
+// collision closure. Runs BEFORE the numeric regexes: on an identical range
+// the figure candidate here wins dedupe and carries the key.
+function collectSpelledAmounts(
+  out: Candidate[],
+  text: string,
+  chunkIdx: number,
+  exclusions: Range[],
+): void {
+  SPELL_AMOUNT_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = SPELL_AMOUNT_RE.exec(text))) {
+    const seq = match[1];
+    const tail = match[2] ?? '';
+    const paren = match[3] ?? '';
+    if (seq === '') continue;
+    if (tail === '') {
+      // No currency/percent word: "fifteen (15) days", "thirty-six (36)
+      // monthly installments" are durations/counts, not amounts. Tokenizing
+      // them registered bare words ("fifteen", "two") as known values and the
+      // gate then flagged every other "two"/"five" in the document.
+      if (!/%|usd|idr|eur|gbp|sgd|rupiah|rp/i.test(paren)) continue;
+      // Amount whose unit lives only in the parenthesis ("fifteen (15%)"):
+      // blind words + figure as ONE span so the known value is the whole
+      // phrase, never a bare number word.
+      const end = match.index + match[0].length;
+      const digitsOnly = paren.match(/\d[\d,.]*%?/)?.[0];
+      if (!overlapsAny(match.index, end, exclusions) && !overlapsAny(match.index, end, out)) {
+        out.push({
+          chunkIdx,
+          start: match.index,
+          end,
+          text: text.slice(match.index, end),
+          kind: paren.includes('%') ? 'PERCENT' : 'MONEY',
+          key: digitsOnly === undefined ? undefined : normalizeValue(digitsOnly),
+        });
+      }
+      continue;
+    }
+    const isPercent = /(?:percent|persen)[ \t]*$/i.test(tail);
+    const kind: SpanKind = isPercent ? 'PERCENT' : 'MONEY';
+    const phraseEnd = match.index + seq.length + tail.length;
+    const digits = paren.match(/\d[\d,.]*%?/)?.[0];
+    const key = digits === undefined ? undefined : normalizeValue(digits);
+
+    if (
+      !overlapsAny(match.index, phraseEnd, exclusions) &&
+      !overlapsAny(match.index, phraseEnd, out)
+    ) {
+      out.push({
+        chunkIdx,
+        start: match.index,
+        end: phraseEnd,
+        text: text.slice(match.index, phraseEnd),
+        kind,
+        key,
+      });
+    }
+    if (digits === undefined) continue;
+
+    const figureStart = match.index + seq.length + tail.length + paren.lastIndexOf(digits);
+    const figureEnd = figureStart + digits.length;
+    if (
+      !overlapsAny(figureStart, figureEnd, exclusions) &&
+      !overlapsAny(figureStart, figureEnd, out)
+    ) {
+      out.push({
+        chunkIdx,
+        start: figureStart,
+        end: figureEnd,
+        text: digits,
+        kind: digits.endsWith('%') ? 'PERCENT' : kind,
+        key,
+      });
+    }
   }
 }
 
@@ -232,6 +421,10 @@ function detectInChunk(chunk: DocChunk, chunkIdx: number): Candidate[] {
   // Percent first: bare-money detection must not swallow the digits in `55%`.
   addRegexMatches(out, text, PERCENT_RE, 'PERCENT', chunkIdx, exclusions);
   const percentSpans = out.slice();
+
+  // Spelled amounts before the numeric regexes: the figure candidate claims
+  // its range (with the shared key) before the numeric scanners see it.
+  collectSpelledAmounts(out, text, chunkIdx, exclusions);
 
   const money: Candidate[] = [];
   addRegexMatches(money, text, SYMBOL_MONEY_RE, 'MONEY', chunkIdx, exclusions);
@@ -248,8 +441,40 @@ function detectInChunk(chunk: DocChunk, chunkIdx: number): Candidate[] {
   addCaptureMatches(out, text, VENTURE_PAREN_RE, 'NAME', chunkIdx, exclusions, 'VENTURE');
   addCaptureMatches(out, text, VENTURE_THE_RE, 'NAME', chunkIdx, exclusions, 'VENTURE');
   addCaptureMatches(out, text, VENTURE_COOWNED_RE, 'NAME', chunkIdx, exclusions, 'VENTURE');
-  addCaptureMatches(out, text, SKU_PREFIX_RE, 'NAME', chunkIdx, exclusions, 'SKU', isSkuLabel);
-  addCaptureMatches(out, text, SKU_SUFFIX_RE, 'NAME', chunkIdx, exclusions, 'SKU', isSkuLabel);
+  addCaptureMatches(out, text, VENTURE_ALIAS_RE, 'NAME', chunkIdx, exclusions, 'VENTURE', (v) =>
+    VENTURE_ALIAS_GENERIC.has(v.trim().toLowerCase()),
+  );
+  // Before the SKU scanners: on the same range (and the suffix-bearing name
+  // wins overlap against any shorter SKU capture inside it).
+  addCaptureMatches(out, text, VENTURE_SUFFIX_RE, 'NAME', chunkIdx, exclusions, 'VENTURE');
+  // People who sign/approve are PARTNER; the frozen EntityType contract has
+  // no PERSON type, so prose persons get PARTNER too (strongest sweep:
+  // Pass A full name + Pass B first/last word, mirrored by the gate).
+  addCaptureMatches(out, text, PERSON_PROSE_RE, 'NAME', chunkIdx, exclusions, 'PARTNER', isPersonStop);
+  addCaptureMatches(out, text, PERSON_BLOCK_RE, 'NAME', chunkIdx, exclusions, 'PARTNER', isPersonStop);
+  addCaptureMatches(out, text, PERSON_HONORIFIC_RE, 'NAME', chunkIdx, exclusions, 'PARTNER', isPersonStop);
+  addCaptureMatches(
+    out,
+    text,
+    SKU_PREFIX_RE,
+    'NAME',
+    chunkIdx,
+    exclusions,
+    'SKU',
+    (value, after) =>
+      isSkuLabel(value) || SUFFIX_AFTER_RE.test(after) || SUFFIX_VALUE_RE.test(value),
+  );
+  addCaptureMatches(
+    out,
+    text,
+    SKU_SUFFIX_RE,
+    'NAME',
+    chunkIdx,
+    exclusions,
+    'SKU',
+    (value, after) =>
+      isSkuLabel(value) || SUFFIX_AFTER_RE.test(after) || SUFFIX_VALUE_RE.test(value),
+  );
 
   return out;
 }
@@ -507,7 +732,7 @@ function assignTokens(candidates: Candidate[]): Record<string, string> {
 
   for (const candidate of candidates) {
     const type = candidate.type ?? 'COST';
-    const key = `${type}|${normalizeValue(candidate.text)}`;
+    const key = `${type}|${candidate.key ?? normalizeValue(candidate.text)}`;
     let token = tokens.get(key);
     if (!token) {
       const next = (counters.get(type) ?? 0) + 1;
@@ -715,13 +940,31 @@ export async function anonymizeChunks(chunks: DocChunk[]): Promise<AnonymizeResu
       b.end - b.start - (a.end - a.start),
   );
 
+  // Entity reading beats person reading: a value detected as VENTURE/SKU
+  // anywhere ("Bright Sprouts" with a company keyword in one chunk) must not
+  // get a second PARTNER token where a person-context regex happens to
+  // precede it ("referring again to Bright Sprouts"). One value, one token.
+  const nameTypes = new Map<string, EntityType>();
+  for (const candidate of all) {
+    if (candidate.kind !== 'NAME' || !candidate.type) continue;
+    const value = normalizeValue(candidate.text);
+    if (!nameTypes.has(value) || nameTypes.get(value) === 'PARTNER') {
+      nameTypes.set(value, candidate.type);
+    }
+  }
+  for (const candidate of all) {
+    if (candidate.kind === 'NAME' && candidate.type) {
+      candidate.type = nameTypes.get(normalizeValue(candidate.text)) ?? candidate.type;
+    }
+  }
+
   const ambiguous = all.filter((candidate) => !candidate.type);
   await tagWithModel(ambiguous, chunks, all);
 
   // Deterministic heuristics fill anything the model did not tag.
   const typedByValue = new Map<string, EntityType>();
   const valueKey = (candidate: Candidate): string =>
-    `${candidate.kind}|${normalizeValue(candidate.text)}`;
+    `${candidate.kind}|${candidate.key ?? normalizeValue(candidate.text)}`;
   for (const candidate of all) {
     if (!candidate.type) continue;
     typedByValue.set(valueKey(candidate), candidate.type);
