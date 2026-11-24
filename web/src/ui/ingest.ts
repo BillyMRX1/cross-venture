@@ -37,7 +37,7 @@ const STAGES = [
   { id: 'extract', idx: '01', label: 'Extract text', engine: 'LOCAL REGEX', blurb: '.txt / .md / text-layer PDF — local' },
   { id: 'chunk', idx: '02', label: 'Chunk documents', engine: 'LOCAL HEUR', blurb: '~600 words, page-tagged — local' },
   { id: 'redact', idx: '03', label: 'Symbolic redaction', engine: 'LOCAL RULES', blurb: 'local rules — raw text never leaves' },
-  { id: 'synthesize', idx: '04', label: 'Cloud graph synthesis', engine: 'CLOUD GEMINI', blurb: 'IN_CLOUD — blinded tokens only' },
+  { id: 'synthesize', idx: '04', label: 'Cloud graph synthesis', engine: 'CLOUD', blurb: 'IN_CLOUD — blinded tokens only' },
   { id: 'save', idx: '05', label: 'Save (IndexedDB)', engine: 'LOCAL CACHE', blurb: 'local cache — never leaves the device' },
 ] as const;
 

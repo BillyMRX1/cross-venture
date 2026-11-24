@@ -27,7 +27,7 @@ function propsIn(block: string): string[] {
 }
 
 // Signature colors, verbatim from the sheet (A light / B dark).
-const A_SIG = ['#F5F3EE', '#D94814', '#136F4A', '#1E4E8C'];
+const A_SIG = ['#F5F3EE', '#CA4814', '#136F4A', '#1E4E8C'];
 const B_SIG = ['#12130F', '#E59A24', '#34C77B', '#7A97C4'];
 
 describe('dual-mode palette contract', () => {
