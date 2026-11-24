@@ -1,5 +1,5 @@
-// WS-4 Phone Sync tab: vault key + pairing string, encrypted Firestore push,
-// paste-pairing pull, online/offline chip. Degrades to a setup hint when
+// Phone Sync (Settings page): vault key + pairing string, encrypted Firestore
+// push, paste-pairing pull, online/offline chip. Degrades to a setup hint when
 // Firebase env vars are absent instead of crashing.
 import { exportVaultKey, generateVaultKey } from '../crypto/vault';
 import { pullAndDecrypt, pushEncrypted, ReadOnlyWorkspaceError } from '../storage/db';
@@ -99,7 +99,7 @@ export function mountSync(root: HTMLElement): void {
     })();
   });
 
-  const copyPairBtn = el('button', { class: 'btn btn-sm' }, 'Copy pairing string');
+  const copyPairBtn = el('button', { class: 'btn btn-secondary' }, 'Copy pairing string');
   copyPairBtn.addEventListener('click', () => {
     void (async () => {
       if (!pairingBox.value) {
@@ -119,7 +119,7 @@ export function mountSync(root: HTMLElement): void {
       const ws = store.workspace;
       const key = store.vaultKey;
       if (!ws) {
-        setStatus('note--warn', 'No workspace — go to Ingest first.');
+        setStatus('note--warn', 'No workspace — load documents on the Documents page first.');
         return;
       }
       if (!key) {
@@ -186,7 +186,7 @@ export function mountSync(root: HTMLElement): void {
             payloadLog: prev?.payloadLog ?? [],
             updatedAt: Date.now(),
           });
-          setStatus('note--ok', `Workspace ${wsId.slice(0, 8)}… decrypted on-device. The Deal Simulator now has the graph.`);
+          setStatus('note--ok', `Workspace ${wsId.slice(0, 8)}… decrypted on-device. The simulator now has the graph.`);
           toast('Synced workspace loaded', 'ok');
         }
       } catch (e) {
@@ -227,7 +227,7 @@ export function mountSync(root: HTMLElement): void {
     const ws = store.workspace;
     return ws
       ? `Workspace loaded: “${ws.name}” — ${ws.graph.products.length} SKU(s), ${ws.graph.dealRules.length} rule(s) ready to sync.`
-      : 'No workspace loaded — go to Ingest before pushing.';
+      : 'No workspace loaded — load documents on the Documents page before pushing.';
   }
 
   const wsNoteP = el('p', {}, wsNoteText());
@@ -243,16 +243,16 @@ export function mountSync(root: HTMLElement): void {
   root.replaceChildren(
     el(
       'div',
-      { class: 'card' },
-      el('div', { class: 'verdict-head' }, el('h2', {}, 'Phone Sync — zero-knowledge ciphertext'), netChip),
+      { class: 'section' },
+      el('div', { class: 'section-head' }, el('h2', { class: 'section-title' }, 'Phone sync'), netChip),
       wsNoteP,
-      el('div', { class: 'card-toolbar' }, el('button', { class: 'btn btn-sm', id: 'syncGoIngest' }, 'Go to Ingest')),
+      el('div', { class: 'btn-row' }, el('button', { class: 'btn btn-secondary', id: 'syncGoIngest' }, 'Open Documents')),
     ),
     guard ?? el('div', { hidden: '' }),
     el(
       'div',
-      { class: 'card' },
-      el('h2', {}, '1 · Vault key & pairing string (TD-4)'),
+      { class: 'section' },
+      el('h3', {}, '1 · Vault key & pairing string (TD-4)'),
       el('p', {}, 'AES-256-GCM key lives only in this browser. The pairing string is base64url({wsId, key}) — the phone imports it, fetches ciphertext, decrypts locally.'),
       genBtn,
       el('div', { class: 'field', style: 'margin-top:12px' }, el('label', {}, 'Vault key (exported JWK, base64url)'), vaultPre),
@@ -260,21 +260,21 @@ export function mountSync(root: HTMLElement): void {
     ),
     el(
       'div',
-      { class: 'card' },
-      el('h2', {}, '2 · Push encrypted workspace'),
+      { class: 'section' },
+      el('h3', {}, '2 · Push encrypted workspace'),
       el('p', {}, 'Client-side encrypts {graph, tokenMap}; Firestore document holds only {wsId, ownerUid, iv, cipher, updatedAt}.'),
       pushBtn,
     ),
     el(
       'div',
-      { class: 'card' },
-      el('h2', {}, '3 · Pull from another device'),
+      { class: 'section' },
+      el('h3', {}, '3 · Pull from another device'),
       el('p', {}, 'Paste the pairing string here (as the phone would hold it) to verify the full encrypted round-trip.'),
       pullInput,
-      el('div', { class: 'card-toolbar' }, pullBtn),
+      el('div', { class: 'btn-row' }, pullBtn),
     ),
-    el('div', { class: 'card' }, statusBox),
+    el('div', { class: 'section' }, statusBox),
   );
 
-  root.querySelector('#syncGoIngest')?.addEventListener('click', () => goTab('ingest'));
+  root.querySelector('#syncGoIngest')?.addEventListener('click', () => goTab('documents'));
 }

@@ -8,7 +8,7 @@
       name="description"
       content="Cross-Venture Deal Guardian — private ingestion, blinded cloud graph, encrypted phone sync, offline deterministic margin checks."
     />
-    <title>Cross-Venture Deal Guardian</title>
+    <title>Cross-Venture</title>
     <script>
       // Theme boot before first paint (owner pick 2026-11-24): the persisted
       // manual choice wins; otherwise the OS preference. Key: cv-theme.
@@ -19,34 +19,35 @@
         else if (t === "light") document.documentElement.setAttribute("data-theme", "light");
       } catch (e) {}
     </script>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
-      rel="stylesheet"
-    />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
 
     <header class="topbar">
-      <div class="topbar-in">
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true">◧</span>
-          <div class="brand-text">
-            <strong>Cross-Venture Deal Guardian</strong>
-            <span class="brand-sub">Private ingestion, blinded cloud graph, offline verdicts</span>
+      <div class="topbar-brand">
+        <span class="wordmark">
+          <span class="wordmark-dot" aria-hidden="true"></span>
+          <span>Cross-Venture</span>
+        </span>
+      </div>
+      <div class="topbar-main">
+        <div class="topbar-left">
+          <select id="ventureSwitch" class="venture-switcher" aria-label="Switch venture">
+            <option value="">No workspace loaded</option>
+          </select>
+          <span class="topbar-divider" aria-hidden="true"></span>
+          <div class="search-box">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="7.25" cy="7.25" r="4.75" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M10.75 10.75L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <input type="search" class="search-input" placeholder="Search" aria-label="Search — not yet available" />
           </div>
         </div>
-        <div class="rail" id="rail" aria-hidden="true">
-          <span class="rail-step" id="rail-1"><span class="dot"></span>01 IMPORT</span>
-          <span class="rail-step" id="rail-2"><span class="dot"></span>02 PIPELINE</span>
-          <span class="rail-step" id="rail-3"><span class="dot"></span>03 GRAPH</span>
-        </div>
-        <div class="chips" aria-label="Runtime status">
+        <div class="topbar-right" aria-label="Runtime status">
           <span class="chip chip--muted" id="chipDevice" title="Checking on-device model…">ON-DEVICE: checking…</span>
           <span class="chip chip--muted" id="chipNet">NETWORK: …</span>
-          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch color theme (auto, light, dark)">THEME: AUTO</button>
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch color theme (auto, light, dark)">Theme: Auto</button>
         </div>
       </div>
     </header>
@@ -57,19 +58,63 @@
       and phone sync will resume once you reconnect.
     </div>
 
-    <div class="wrap">
-      <nav class="tabs" role="tablist" aria-label="Workspace sections">
-        <button class="tab" role="tab" id="tabbtn-ingest" data-tab="ingest" aria-controls="tab-ingest">Ingest</button>
-        <button class="tab" role="tab" id="tabbtn-inspector" data-tab="inspector" aria-controls="tab-inspector">Privacy Inspector</button>
-        <button class="tab" role="tab" id="tabbtn-sync" data-tab="sync" aria-controls="tab-sync">Phone Sync</button>
-        <button class="tab" role="tab" id="tabbtn-simulator" data-tab="simulator" aria-controls="tab-simulator">Deal Simulator</button>
+    <div class="shell">
+      <nav class="sidebar" aria-label="Primary navigation">
+        <ul class="nav-list">
+          <li><button type="button" class="nav-link" data-page="requests">Requests</button></li>
+          <li><button type="button" class="nav-link" data-page="rules">Rules</button></li>
+          <li><button type="button" class="nav-link" data-page="documents">Documents</button></li>
+          <li><button type="button" class="nav-link" data-page="settings">Settings</button></li>
+        </ul>
       </nav>
 
-      <main id="main">
-        <section class="panel" id="tab-ingest" role="tabpanel" aria-labelledby="tabbtn-ingest" tabindex="0"></section>
-        <section class="panel" id="tab-inspector" role="tabpanel" aria-labelledby="tabbtn-inspector" tabindex="0" hidden></section>
-        <section class="panel" id="tab-sync" role="tabpanel" aria-labelledby="tabbtn-sync" tabindex="0" hidden></section>
-        <section class="panel" id="tab-simulator" role="tabpanel" aria-labelledby="tabbtn-simulator" tabindex="0" hidden></section>
+      <main id="main" class="workspace">
+        <section class="page" id="page-requests">
+          <header class="page-header">
+            <h1 class="page-title">Deal Simulator</h1>
+            <p class="page-sub">Pick a deal and run the deterministic margin check. Becomes the request record page in phase 2.</p>
+          </header>
+          <div id="root-simulator"></div>
+        </section>
+
+        <section class="page" id="page-rules" hidden>
+          <header class="page-header">
+            <h1 class="page-title">Rules</h1>
+            <p class="page-sub">Deal rules extracted from your documents, re-hydrated locally.</p>
+          </header>
+          <div id="root-rules"></div>
+        </section>
+
+        <section class="page" id="page-documents" hidden>
+          <header class="page-header">
+            <h1 class="page-title">Documents</h1>
+            <p class="page-sub">Contracts, notes and cost sheets enter here. Five stages run on this device first; only blinded tokens ever reach the cloud stage.</p>
+          </header>
+          <div id="root-ingest"></div>
+        </section>
+
+        <section class="page" id="page-settings" hidden>
+          <header class="page-header">
+            <h1 class="page-title">Settings</h1>
+          </header>
+
+          <div id="root-sync"></div>
+
+          <div id="root-inspector"></div>
+
+          <section class="section" aria-labelledby="set-appearance">
+            <h2 class="section-title" id="set-appearance">Appearance</h2>
+            <div class="field">
+              <label for="themeMode">Theme</label>
+              <select id="themeMode">
+                <option value="auto">Auto — follow the system</option>
+                <option value="light">Light</option>
+                <option value="dark">Dark</option>
+              </select>
+            </div>
+            <p class="hint">Choice persists on this device (key cv-theme) and applies on next load without a flash.</p>
+          </section>
+        </section>
       </main>
     </div>
 

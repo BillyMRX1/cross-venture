@@ -50,7 +50,23 @@ const BADGE_CLASS: Record<Badge, string> = {
   'MARGIN BREACH': 'badge--breach',
 };
 
+let mountedRoot: HTMLElement | null = null;
+
+/** Top-bar venture switcher hook: pick the venture the simulator runs against. */
+export function selectVenture(ventureId: string): void {
+  st.ventureId = ventureId;
+  st.skuId = '';
+  st.result = null;
+  if (mountedRoot) renderSim(mountedRoot);
+}
+
+/** Currently selected venture id (empty string until a graph is loaded). */
+export function currentVentureId(): string {
+  return st.ventureId;
+}
+
 export function mountSimulator(root: HTMLElement): void {
+  mountedRoot = root;
   const render = (): void => renderSim(root);
   store.subscribe(() => {
     // A new workspace invalidates the previous verdict (its tokens may differ).
@@ -87,14 +103,14 @@ function citationOf(rule: DealRuleNode | null): string {
 function renderSim(root: HTMLElement): void {
   const ws = store.workspace;
   if (!ws) {
-    root.replaceChildren(emptyBox('No workspace yet', 'Ingest documents (or load the sample workspace) — the simulator reads ventures, SKUs and rules from the synced graph.'));
+    root.replaceChildren(emptyBox('No workspace yet', 'Load documents (or the sample workspace) on the Documents page — the simulator reads ventures, SKUs and rules from the synced graph.'));
     return;
   }
   if (ws.graph.ventures.length === 0) {
     root.replaceChildren(
       emptyBox(
         'Workspace has no graph yet',
-        'The cloud graph synthesis stage has not produced ventures/products/rules. Open Privacy Inspector to diagnose, fix the pipeline, and re-run Ingest.',
+        'The cloud graph synthesis stage has not produced ventures/products/rules. Open Settings → Privacy to diagnose, fix the pipeline, and re-run ingestion on the Documents page.',
       ),
     );
     return;
@@ -145,8 +161,8 @@ function renderSim(root: HTMLElement): void {
   nodes.push(
     el(
       'div',
-      { class: 'card' },
-      el('h2', {}, `Deal Simulator — ${ws.name}`),
+      { class: 'section' },
+      el('h2', { class: 'section-title' }, `Deal inputs — ${ws.name}`),
       el('p', {}, 'Ventures, SKUs and rules come from the encrypted graph and are re-hydrated locally from the Secret Key Map before anything is displayed or computed.'),
       el(
         'div',
@@ -161,8 +177,8 @@ function renderSim(root: HTMLElement): void {
   nodes.push(
     el(
       'div',
-      { class: 'card' },
-      el('h3', {}, `Rules in force for “${ventureName}”`),
+      { class: 'section' },
+      el('h2', { class: 'section-title' }, `Rules in force for “${ventureName}”`),
       el(
         'div',
         { class: 'rule-strip' },
@@ -181,7 +197,7 @@ function renderSim(root: HTMLElement): void {
 
   /* natural-language query */
   const nlInput = el('input', { type: 'text', id: 'simQuery', value: st.nlText, 'aria-label': 'Natural-language deal query' });
-  const parseBtn = el('button', { class: 'btn', id: 'simParse' }, 'Parse query');
+  const parseBtn = el('button', { class: 'btn btn-secondary', id: 'simParse' }, 'Parse query');
   parseBtn.addEventListener('click', () => {
     st.nlText = nlInput.value;
     void handleParse(root, ws);
@@ -196,8 +212,8 @@ function renderSim(root: HTMLElement): void {
   nodes.push(
     el(
       'div',
-      { class: 'card' },
-      el('h3', {}, 'Ask in plain words'),
+      { class: 'section' },
+      el('h2', { class: 'section-title' }, 'Ask in plain words'),
       el('p', {}, 'Try “20% off 30 units on the linen dress”. Parsed on-device via generate(\'query\') when the model is available; always falls back to a local regex + fuzzy-name parser.'),
       el('div', { class: 'field-row' }, el('div', { class: 'field', style: 'flex:3 1 260px' }, el('label', { for: 'simQuery' }, 'Buyer message'), nlInput), el('div', { class: 'field', style: 'flex:0 1 140px; justify-content:flex-end' }, parseBtn)),
       ...(st.queryNote ? [el('div', { class: 'query-chip' }, `Query parsed via ${st.queryNote}`)] : []),
@@ -217,13 +233,13 @@ function renderSim(root: HTMLElement): void {
   buyerInput.addEventListener('input', () => {
     st.buyer = buyerInput.value;
   });
-  const runBtn = el('button', { class: 'btn btn-primary btn-run', id: 'simRun' }, 'RUN MARGIN CHECK');
+  const runBtn = el('button', { class: 'btn btn-primary', id: 'simRun' }, 'Run margin check');
   runBtn.addEventListener('click', () => runCheck(root, ws));
   nodes.push(
     el(
       'div',
-      { class: 'card' },
-      el('h3', {}, 'Requested deal'),
+      { class: 'section' },
+      el('h2', { class: 'section-title' }, 'Requested deal'),
       el(
         'div',
         { class: 'field-row' },
@@ -258,8 +274,8 @@ function tile(k: string, v: string): HTMLElement {
 }
 
 function emptyBox(title: string, body: string): HTMLElement {
-  const box = el('div', { class: 'empty' }, el('h2', { class: 'hero-head' }, title), el('p', { class: 'hero-sub' }, body), el('div', { class: 'cta-row' }, el('button', { class: 'btn btn-primary' }, 'Go to Ingest')));
-  box.querySelector('button')?.addEventListener('click', () => goTab('ingest'));
+  const box = el('div', { class: 'empty' }, el('h2', { class: 'empty-title' }, title), el('p', { class: 'empty-sub' }, body), el('div', { class: 'cta-row' }, el('button', { class: 'btn btn-primary' }, 'Open Documents')));
+  box.querySelector('button')?.addEventListener('click', () => goTab('documents'));
   return box;
 }
 
@@ -390,7 +406,7 @@ function verdictCard(res: RunResult, ws: Workspace): HTMLElement {
 
   const card = el(
     'div',
-    { class: 'verdict' },
+    { class: 'section verdict' },
     el(
       'div',
       { class: 'verdict-head' },
@@ -430,7 +446,7 @@ function verdictCard(res: RunResult, ws: Workspace): HTMLElement {
 }
 
 function draftBlock(title: string, text: string, copyLabel: string): HTMLElement {
-  const copyBtn = el('button', { class: 'btn btn-sm btn-primary' }, 'Copy for WhatsApp');
+  const copyBtn = el('button', { class: 'btn btn-secondary' }, 'Copy for WhatsApp');
   copyBtn.addEventListener('click', () => {
     void copyText(text, copyLabel);
   });
