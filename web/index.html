@@ -9,6 +9,22 @@
       content="Cross-Venture Deal Guardian — private ingestion, blinded cloud graph, encrypted phone sync, offline deterministic margin checks."
     />
     <title>Cross-Venture Deal Guardian</title>
+    <script>
+      // Theme boot before first paint (owner pick 2026-11-24): the persisted
+      // manual choice wins; otherwise the OS preference. Key: cv-theme.
+      try {
+        var t = localStorage.getItem("cv-theme");
+        var dark = t === "dark" || (t === null && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        if (dark) document.documentElement.setAttribute("data-theme", "dark");
+        else if (t === "light") document.documentElement.setAttribute("data-theme", "light");
+      } catch (e) {}
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
@@ -19,12 +35,18 @@
           <span class="brand-mark" aria-hidden="true">◧</span>
           <div class="brand-text">
             <strong>Cross-Venture Deal Guardian</strong>
-            <span class="brand-sub">Private ingestion · blinded cloud graph · offline verdicts</span>
+            <span class="brand-sub">Private ingestion, blinded cloud graph, offline verdicts</span>
           </div>
+        </div>
+        <div class="rail" id="rail" aria-hidden="true">
+          <span class="rail-step" id="rail-1"><span class="dot"></span>01 IMPORT</span>
+          <span class="rail-step" id="rail-2"><span class="dot"></span>02 PIPELINE</span>
+          <span class="rail-step" id="rail-3"><span class="dot"></span>03 GRAPH</span>
         </div>
         <div class="chips" aria-label="Runtime status">
           <span class="chip chip--muted" id="chipDevice" title="Checking on-device model…">ON-DEVICE: checking…</span>
           <span class="chip chip--muted" id="chipNet">NETWORK: …</span>
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch color theme (auto, light, dark)">THEME: AUTO</button>
         </div>
       </div>
     </header>

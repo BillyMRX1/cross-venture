@@ -10,6 +10,7 @@ import { mountSimulator } from './ui/simulator';
 import { mountSync } from './ui/sync';
 import { el, errText, toast } from './ui/util';
 import { lsGet, lsSet, registerTabSetter, store } from './ui/state';
+import { initThemeToggle } from './ui/theme';
 
 const TABS = ['ingest', 'inspector', 'sync', 'simulator'] as const;
 type TabId = (typeof TABS)[number];
@@ -139,6 +140,7 @@ function boot(): void {
     if (node) mount(node);
   }
   mountTabs();
+  initThemeToggle();
   refreshDeviceChip();
   setupNetwork();
   void registerServiceWorker();

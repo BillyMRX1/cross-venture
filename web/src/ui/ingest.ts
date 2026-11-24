@@ -1,12 +1,19 @@
 // WS-4 Ingest tab: file upload / paste / sample seed → chunker → anonymizer
 // → blinded cloud graph synthesis → local save. Stages degrade with visible
 // messages when upstream modules throw (expected while stubs are in place).
+// Restyle 2026-11-24 (owner pick BOTH modes): the pipeline renders as the
+// Screen-2 ledger with the PRIVACY BOUNDARY signature band, an event log,
+// measured durations and engine tags. Pipeline logic is untouched; tags are
+// honest (no NER claim unless on-device NER is actually available, model
+// names only ever come from usedModels).
 import { PayloadBlockedError, synthesizeGraph } from '../cloud/graphExtractor';
+import { onDeviceStatus } from '../hybrid';
 import { anonymizeChunks } from '../ingest/anonymizer';
 import { chunkDocument } from '../ingest/chunker';
 import { extractTextFromFile } from '../ingest/textextract';
 import { saveWorkspaceLocal } from '../storage/db';
 import type { AnonymizeResult, DocChunk, KnowledgeGraph, PayloadLogEntry, Workspace } from '../types';
+import { resetRail, setRail } from './rail';
 import { store } from './state';
 import { el, errText, newId, toast } from './util';
 import { isSpaFallback } from '../ingest/spaFallback';
@@ -23,22 +30,40 @@ const SAMPLE_DOCS: Array<{ title: string; paths: string[] }> = [
   { title: 'Nomad Studio solo terms', paths: ['nomad-studio-solo-terms.md', 'B1-nomad-studio-solo-terms.md'] },
 ];
 
+// Ledger rows. `engine` stays honest: LOCAL RULES until on-device NER is
+// proven available (then LOCAL NER); the cloud tag never names a model —
+// the model chip (from usedModels) is the only place model names appear.
 const STAGES = [
-  { id: 'extract', label: '1 · Extract text', blurb: '.txt / .md / text-layer PDF — local' },
-  { id: 'chunk', label: '2 · Chunk documents', blurb: '~600 words, page-tagged — local' },
-  { id: 'redact', label: '3 · Symbolic redaction', blurb: 'regex + on-device roles — local; raw text never leaves' },
-  { id: 'synthesize', label: '4 · Cloud graph synthesis', blurb: 'IN_CLOUD — blinded tokens only' },
-  { id: 'save', label: '5 · Save workspace', blurb: 'IndexedDB local cache' },
+  { id: 'extract', idx: '01', label: 'Extract text', engine: 'LOCAL REGEX', blurb: '.txt / .md / text-layer PDF — local' },
+  { id: 'chunk', idx: '02', label: 'Chunk documents', engine: 'LOCAL HEUR', blurb: '~600 words, page-tagged — local' },
+  { id: 'redact', idx: '03', label: 'Symbolic redaction', engine: 'LOCAL RULES', blurb: 'local rules — raw text never leaves' },
+  { id: 'synthesize', idx: '04', label: 'Cloud graph synthesis', engine: 'CLOUD GEMINI', blurb: 'IN_CLOUD — blinded tokens only' },
+  { id: 'save', idx: '05', label: 'Save (IndexedDB)', engine: 'LOCAL CACHE', blurb: 'local cache — never leaves the device' },
 ] as const;
 
 type StageId = (typeof STAGES)[number]['id'];
 type StageState = 'idle' | 'run' | 'ok' | 'err' | 'skip';
 
+const STATE_CLASS: Record<StageState, string> = {
+  idle: 'lrow--queued',
+  run: 'lrow--active',
+  ok: 'lrow--done',
+  err: 'lrow--err',
+  skip: 'lrow--skip',
+};
+
 const EMPTY_GRAPH: KnowledgeGraph = { ventures: [], partners: [], products: [], dealRules: [] };
+
+function clockNow(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
 
 export function mountIngest(root: HTMLElement): void {
   let running = false;
-  const stageEls = new Map<StageId, { li: HTMLLIElement; note: HTMLElement }>();
+  const rowEls = new Map<StageId, { row: HTMLDivElement; note: HTMLElement; metric: HTMLElement; dur: HTMLElement }>();
+  const stageStartedAt = new Map<StageId, number>();
 
   // Hero framing for the demo's first screen (CEO UI/UX polish 2026-11-23).
   const hero = el(
@@ -59,34 +84,86 @@ export function mountIngest(root: HTMLElement): void {
   );
   wsSummary.hidden = true;
 
-  const stageList = el('ul', { class: 'stages' });
-  for (const s of STAGES) {
-    const note = el('div', { class: 'note', id: `note-${s.id}` });
-    note.textContent = s.blurb;
-    const li = el('li', { class: 'stage', id: `stage-${s.id}` }, el('span', { class: 'dot' }), el('span', { class: 'label' }, s.label), note);
-    stageEls.set(s.id, { li, note });
-    stageList.append(li);
+  // Screen-2 ledger: three local rows, the privacy boundary, two rows below.
+  const ledger = el('div', { class: 'ledger', role: 'table', 'aria-label': 'Pipeline stages' });
+  function addRow(s: (typeof STAGES)[number]): void {
+    const note = el('span', { class: 'lnote', id: `note-${s.id}` }, s.blurb);
+    const row = el(
+      'div',
+      { class: 'lrow lrow--queued', id: `stage-${s.id}`, role: 'row' },
+      el('span', { class: 'lidx' }, s.idx),
+      el('span', { class: 'llabel' }, el('span', {}, s.label), note),
+      el('span', { class: s.id === 'synthesize' ? 'engine-tag engine-tag--cloud' : 'engine-tag' }, s.engine),
+      el('span', { class: 'metric' }, '—'),
+      el('span', { class: 'dur' }, '—'),
+    );
+    rowEls.set(s.id, { row, note, metric: row.children[3] as HTMLElement, dur: row.children[4] as HTMLElement });
+    ledger.append(row);
+  }
+  addRow(STAGES[0]);
+  addRow(STAGES[1]);
+  addRow(STAGES[2]);
+  ledger.append(el('div', { class: 'boundary-band' }, 'PRIVACY BOUNDARY — MASKED PAYLOAD ONLY'));
+  addRow(STAGES[3]);
+  addRow(STAGES[4]);
+
+  // Event log strip (ops-tool proof): every stage transition, timestamped.
+  const evlog = el('div', { class: 'evlog' }, el('div', { class: 'evlog-head' }, 'EVENT LOG — THIS RUN'));
+  const evBody = evlog;
+  function logEvent(kind: 'ok' | 'err' | 'info', msg: string): void {
+    const row = el('div', { class: `evrow${kind === 'info' ? '' : ` evrow--${kind}`}` }, el('span', { class: 'evtime' }, clockNow()), el('span', { class: 'evmsg' }, msg));
+    evBody.append(row);
+    while (evBody.querySelectorAll('.evrow').length > 12) evBody.querySelector('.evrow')?.remove();
   }
 
-  function setStage(id: StageId, state: StageState, text?: string): void {
-    const s = stageEls.get(id);
+  function setStage(id: StageId, state: StageState, text?: string, metric?: string): void {
+    const s = rowEls.get(id);
     if (!s) return;
-    s.li.className = `stage stage--${state}`;
+    if (state === 'run' && !stageStartedAt.has(id)) stageStartedAt.set(id, Date.now());
+    const stage = STAGES.find((x) => x.id === id);
+    s.row.className = `lrow ${STATE_CLASS[state]}`;
     if (text !== undefined) s.note.textContent = text;
+    if (metric !== undefined) s.metric.textContent = metric;
+    if (state !== 'run') {
+      const started = stageStartedAt.get(id);
+      if (started !== undefined && (state === 'ok' || state === 'skip')) {
+        s.dur.textContent = `${((Date.now() - started) / 1000).toFixed(2)}s`;
+      } else if (state === 'err') {
+        s.dur.textContent = '—';
+      }
+    }
+    if (stage) logEvent(state === 'err' ? 'err' : state === 'ok' ? 'ok' : 'info', `${stage.idx} ${stage.label}: ${text ?? state}`);
   }
 
   function resetStages(): void {
+    stageStartedAt.clear();
     for (const s of STAGES) {
-      const entry = stageEls.get(s.id);
+      const entry = rowEls.get(s.id);
       if (entry) {
-        entry.li.className = 'stage';
+        entry.row.className = 'lrow lrow--queued';
         entry.note.textContent = s.blurb;
+        entry.metric.textContent = '—';
+        entry.dur.textContent = '—';
       }
     }
+    evlog.replaceChildren(el('div', { class: 'evlog-head' }, 'EVENT LOG — THIS RUN'));
     modelChip.textContent = '';
     wsStats.replaceChildren();
     wsSummary.hidden = true;
+    resetRail();
   }
+
+  // Honest engine tag for stage 3: NER only when the on-device model is up.
+  void onDeviceStatus()
+    .then((st) => {
+      if (!st.available) return;
+      const entry = rowEls.get('redact');
+      const tag = entry?.row.querySelector('.engine-tag');
+      if (tag) tag.textContent = 'LOCAL NER';
+    })
+    .catch(() => {
+      /* status probe failed — the honest default (LOCAL RULES) stays */
+    });
 
   /* ---------- pipeline ---------- */
 
@@ -99,6 +176,7 @@ export function mountIngest(root: HTMLElement): void {
     }
     running = true;
     resetStages();
+    setRail(1, 'active');
     try {
       // Stage 1 — extract
       setStage('extract', 'run');
@@ -115,18 +193,20 @@ export function mountIngest(root: HTMLElement): void {
         }
       }
       if (texts.length === 0) {
-        if (stageEls.get('extract')!.li.className === 'stage stage--run') setStage('extract', 'err', 'No text extracted.');
+        if (rowEls.get('extract')!.row.className === 'lrow lrow--active') setStage('extract', 'err', 'No text extracted.');
         return;
       }
       const chars = texts.reduce((a, t) => a + t.text.length, 0);
-      setStage('extract', 'ok', `${texts.length} document(s) · ${chars.toLocaleString()} chars`);
+      setStage('extract', 'ok', `${texts.length} document(s) · ${chars.toLocaleString()} chars`, `${chars.toLocaleString()} ch`);
+      setRail(1, 'done');
+      setRail(2, 'active');
 
       // Stage 2 — chunk
       setStage('chunk', 'run');
       let chunks: DocChunk[] = [];
       try {
         for (const t of texts) chunks = chunks.concat(chunkDocument(t.docName, t.text, 600));
-        setStage('chunk', 'ok', `${chunks.length} chunk(s) across ${texts.length} doc(s)`);
+        setStage('chunk', 'ok', `${chunks.length} chunk(s) across ${texts.length} doc(s)`, `${chunks.length} chunks`);
       } catch (e) {
         setStage('chunk', 'err', errText(e));
         return;
@@ -137,7 +217,7 @@ export function mountIngest(root: HTMLElement): void {
       let anon: AnonymizeResult;
       try {
         anon = await anonymizeChunks(chunks);
-        setStage('redact', 'ok', `${Object.keys(anon.tokenMap).length} typed token(s) · ${anon.blinded.length} blinded chunk(s)`);
+        setStage('redact', 'ok', `${Object.keys(anon.tokenMap).length} typed token(s) · ${anon.blinded.length} blinded chunk(s)`, `${Object.keys(anon.tokenMap).length} masked`);
       } catch (e) {
         setStage('redact', 'err', errText(e));
         return;
@@ -154,7 +234,7 @@ export function mountIngest(root: HTMLElement): void {
           (attempt, waitMs) => setStage('synthesize', 'run',
             `Gemini is busy, retrying… (attempt ${attempt} of 3 failed, waiting ~${Math.max(1, Math.round(waitMs / 1000))}s)`));
         graph = synth.graph;
-        setStage('synthesize', 'ok', `${graph.ventures.length} venture(s) · ${graph.products.length} SKU(s) · ${graph.dealRules.length} rule(s) · ${log.length} payload(s) logged${synth.usedModels.length ? ` · model(s): ${synth.usedModels.join(' + ')}` : ''}`);
+        setStage('synthesize', 'ok', `${graph.ventures.length} venture(s) · ${graph.products.length} SKU(s) · ${graph.dealRules.length} rule(s) · ${log.length} payload(s) logged${synth.usedModels.length ? ` · model(s): ${synth.usedModels.join(' + ')}` : ''}`, `${log.length} payloads`);
         // Honest attribution stays visible in the card header, not just the line.
         modelChip.textContent = synth.usedModels.length ? `model: ${synth.usedModels.join(' + ')}` : '';
       } catch (e) {
@@ -163,6 +243,8 @@ export function mountIngest(root: HTMLElement): void {
           ? `${errText(e)} — workspace kept WITHOUT the cloud graph`
           : `${errText(e)} — workspace kept WITHOUT the cloud graph (${log.length} attempted payload(s) recorded)`);
       }
+      setRail(2, 'done');
+      setRail(3, 'active');
 
       const ws: Workspace = {
         id: newId(),
@@ -178,17 +260,21 @@ export function mountIngest(root: HTMLElement): void {
       setStage('save', 'run');
       try {
         await saveWorkspaceLocal(ws);
-        setStage('save', 'ok', 'Saved to local cache (IndexedDB)');
+        setStage('save', 'ok', 'Saved to local cache (IndexedDB)', 'cached');
       } catch (e) {
-        setStage('save', 'skip', `Not persisted: ${errText(e)}`);
+        setStage('save', 'skip', `Not persisted: ${errText(e)}`, '—');
       }
+
+      // Rail step 3 is GRAPH: only lit when a cloud graph actually landed.
+      const graphCount = graph.ventures.length + graph.products.length + graph.dealRules.length;
+      if (graphCount > 0) setRail(3, 'done');
 
       // Result summary: numbers the pipeline already proved on screen.
       wsStats.replaceChildren(
         statCell('Documents', texts.length),
         statCell('Chunks', chunks.length),
         statCell('Typed tokens', Object.keys(anon.tokenMap).length),
-        statCell('Graph entries', graph.ventures.length + graph.products.length + graph.dealRules.length),
+        statCell('Graph entries', graphCount),
       );
       wsSummary.hidden = false;
 
@@ -332,9 +418,10 @@ export function mountIngest(root: HTMLElement): void {
   const progressCard = el(
     'div',
     { class: 'card' },
-    el('div', { class: 'card-head' }, el('h2', {}, 'Pipeline'), modelChip),
-    el('p', { class: 'hero-sub' }, 'Local stages run first; only blinded tokens reach the cloud stage. Errors degrade visibly instead of crashing.'),
-    stageList,
+    el('div', { class: 'card-head' }, el('h2', {}, 'Pipeline Runner'), modelChip),
+    el('p', { class: 'hero-sub' }, 'Local stages run first; only blinded tokens cross the boundary to the cloud stage. Errors degrade visibly instead of crashing.'),
+    ledger,
+    evlog,
     wsSummary,
     el('div', { class: 'card-toolbar' }, statusLine),
   );

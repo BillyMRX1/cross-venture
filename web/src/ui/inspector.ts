@@ -150,7 +150,7 @@ function tokenTableCard(ws: Workspace): HTMLElement {
           'tr',
           {},
           el('td', { class: 'tok' }, tok),
-          el('td', { class: 'val' }, val),
+          el('td', { class: 'val strike' }, val),
           el('td', {}, 'Simulator names, numbers, citations'),
         ),
       ),
