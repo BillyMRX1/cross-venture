@@ -1,6 +1,7 @@
 # Cross-Venture Deal & Margin Memory
 
-**#BuildHybridAI 2026** — an offline-first deal guardrail for multi-venture founders.
+**#BuildHybridAI 2026** — an offline-first deal and margin guardrail for multi-venture founders,
+agency founders and independent operators who answer discount requests on WhatsApp.
 Ingest contracts privately on desktop, let Cloud Gemini synthesize a knowledge graph
 from **anonymized text only**, then check live discount requests **offline on your
 phone** with deterministic margin math and copy-ready WhatsApp replies.
@@ -72,7 +73,7 @@ A repo-wide grep shows the only `fetch()` calls outside the SDK are static-asset
 
 ## Built during the hackathon period (after Nov 11, 2026)
 
-Repo history starts 2026-11-18 (64 commits): full Vite+TypeScript web app (ingest +
+Repo history starts 2026-11-18; all of it was built during the submission period: full Vite+TypeScript web app (ingest +
 symbolic anonymizer, blinded cloud graph, AES-256-GCM vault, deterministic calc engine,
 WhatsApp drafts); six rounds of security hardening with independent review; a
 reproducible Firestore rules emulator suite; live Firestore provisioning + rules deploy
@@ -110,7 +111,7 @@ android/             Phase-2 Kotlin/Compose companion (M4)
 1. Ingest the 3 "Atelier Emily" docs → Privacy Inspector PASS banner: `Emily`, `$40`, `55%` all tokenized to `[PARTNER_1] [COST_1] [PCT_x]` before any cloud call. *(0:00–0:50)*
 2. Cloud Gemini returns the 4-collection graph with clause citations. *(0:50–1:20)*
 3. Push encrypted vault to phone (ciphertext-only Firestore doc visible in Console). *(1:20–1:40)*
-4. Airplane mode ON → query *"buyer wants 20% off, 30 units"* → **MARGIN BREACH** badge, cited §4.3, counter-offer 10%, one-tap WhatsApp drafts for buyer *and* Emily. *(1:40–2:50)*
+4. Airplane mode ON → query *"buyer wants 20% off, 30 units"* → **MARGIN BREACH** badge (50% margin vs the 55% floor, §4.2; also above the 10% partner cap, §4.3), counter-offer 10% ($90/unit, 55.6%), one-tap WhatsApp drafts for the buyer *and* partner Emily. *(1:40–2:50)*
 5. Switch venture → **Nomad Studio**: different guardrails, no partner drafts. *(2:50–3:00)*
 
 ## License
