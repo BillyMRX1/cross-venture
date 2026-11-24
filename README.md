@@ -5,8 +5,6 @@ Ingest contracts privately on desktop, let Cloud Gemini synthesize a knowledge g
 from **anonymized text only**, then check live discount requests **offline on your
 phone** with deterministic margin math and copy-ready WhatsApp replies.
 
-Full product requirements: [`docs/project_blueprint_prd_buildhybridai_2026.md`](docs/project_blueprint_prd_buildhybridai_2026.md)
-
 ## Value proposition
 
 Founders running several ventures answer dozens of discount requests over chat — "can
@@ -104,7 +102,6 @@ web/                 Phase-1 web app (Vite + TypeScript)
   src/calc/          FR-4 deterministic engine (unit-tested)
   src/drafts/        FR-5 WhatsApp drafts
   public/sample-docs/  Scenario A/B demo documents
-docs/                PRD, milestones, frozen contracts
 android/             Phase-2 Kotlin/Compose companion (M4)
 ```
 
