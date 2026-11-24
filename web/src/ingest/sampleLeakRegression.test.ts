@@ -69,6 +69,41 @@ describe('sample corpus passes the pre-send privacy gate', () => {
   });
 });
 
+describe('generated contract fixture passes the pre-send gate', () => {
+  // Token-density regression (2026-11-24): with 10+ tokens of a type the
+  // prompt contains placeholder indices like [COST_15]; a known short value
+  // "15" used to match the digits inside such tokens and block every send.
+  // This fixture stands in for that shape WITHOUT the tester's private PDFs:
+  // 20 sections (numbers 1..20), one money + two percent values each —
+  // 60+ detected values, far past the 25 minimum.
+  it('25+ money/percent values, section numbers 1..20: zero hits, no raw value survives', async () => {
+    const lines: string[] = [];
+    for (let s = 1; s <= 20; s += 1) {
+      if (s === 11) lines.push('---- page 2 ----', '');
+      lines.push(
+        `Section ${s}`,
+        '',
+        `The unit cost of item ${s} is $${137 * s + 11}. The discount cap is ${40 + s}% and the margin floor is ${80 + s}%.`,
+        '',
+      );
+    }
+    const chunks = chunkDocument('generated-contract.md', lines.join('\n'));
+    const anon = await anonymizeChunks(chunks);
+
+    const detectedValues = Object.keys(anon.tokenMap).filter((t) => !t.startsWith('[VALUE_'));
+    expect(detectedValues.length).toBeGreaterThanOrEqual(25);
+
+    const { payloadLog } = await synthesizeGraph(anon.blinded, legendOf(anon));
+    expect(payloadLog.length).toBeGreaterThan(0);
+    for (const entry of payloadLog) {
+      expect(findLeakedValues(anon.tokenMap, entry.cloudText, 'pre-send').hits).toEqual([]);
+    }
+    // No raw value from the detected set survives anywhere in the blinded text.
+    const allText = anon.blinded.map((c) => c.text).join('\n');
+    expect(findLeakedValues(anon.tokenMap, allText, 'blinded').hits).toEqual([]);
+  });
+});
+
 describe('decimal-form collisions are fully swept', () => {
   it('known $50.25 also blinds bare 50 and grouped 50,25 as distinct tokens', async () => {
     const chunks = chunkDocument('synthetic-decimal.md', 'Pay $50.25 now. In another notation: 50,25. Bulk tier starts at 50 units.');

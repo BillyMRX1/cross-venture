@@ -75,10 +75,14 @@ const ID_THOUSANDS_RE = /\b\d{1,3}(?:\.\d{3})+(?:,\d+)?\b/g;
 const DECIMAL_RE = /\b\d+\.\d+\b/g;
 const BARE_INT_RE = /\b\d+\b/g;
 
-const PARTNER_WITH_RE = /(?:with partner|partner)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/g;
+// Keyword case-insensitive via character classes, NOT the 'i' flag: with
+// 'i' the capture's [A-Z][a-z]+ matches lowercase words and swallowed whole
+// clauses ("Sari Dewi signed for the Bright Sprouts company"). Names must
+// stay capitalized words.
+const PARTNER_WITH_RE = /(?:[Ww]ith [Pp]artner|[Pp]artner|PARTNER)\s+([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)/g;
 const PARTNER_ROLE_RE =
   /(?:co-founder|Co-founder|CO-FOUNDER|Founder|founder|Owner|owner)\s*[:—–-][*"'’\s]*([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)/g;
-const PARTNER_AND_RE = /and partner ([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/g;
+const PARTNER_AND_RE = /[Aa]nd [Pp]artner ([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+)+)/g;
 const VENTURE_PAREN_RE =
   /(?:^|[^\w])([A-Z][A-Za-z'&.-]*(?:\s+[A-Z][A-Za-z'&.-]*){1,3})\s*\(\s*["'](?:the )?(?:Company|Venture|Partnership|Business)/g;
 const VENTURE_THE_RE =
@@ -89,6 +93,23 @@ const SKU_PREFIX_RE =
   /\bSKUs?\s*[:—–-]?\s*((?:[A-Z][A-Za-z'&-]+)(?:\s+[A-Z][A-Za-z'&-]+){1,3})/g;
 const SKU_SUFFIX_RE =
   /([A-Z][A-Za-z'&-]*(?:\s+[A-Z][A-Za-z'&-]*){1,3})[^.\n]{0,30}?SKUs?\b/g;
+
+// Structural document labels sit next to "SKU" wording and were captured as
+// products on real PDFs ("SCHEDULE A", "Wholesale List Price"). A heading is
+// a label, not a product: never tag a captured span that is one.
+const SKU_LABEL_RE =
+  /^(?:schedule|appendix|exhibit|annex|attachment|article|section|clause|part|item|table|figure|form|page)\s+[a-z0-9ivxlc]+$/i;
+const SKU_LABEL_PHRASES: ReadonlySet<string> = new Set([
+  'wholesale list price',
+  'standard list price',
+  'list price',
+  'price list',
+]);
+
+function isSkuLabel(value: string): boolean {
+  const t = value.trim();
+  return SKU_LABEL_RE.test(t) || SKU_LABEL_PHRASES.has(t.toLowerCase());
+}
 
 const MONEY_CONTEXT_RE =
   /(cost|cogs|modal|harga|retail|price|sell|jual|rate|fee|budget|spend|profit|revenue|margin)/;
@@ -157,12 +178,13 @@ function addCaptureMatches(
   chunkIdx: number,
   exclusions: Range[],
   type: EntityType,
+  reject?: (value: string) => boolean,
 ): void {
   re.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = re.exec(text))) {
     const value = match[1];
-    if (!value) continue;
+    if (!value || (reject !== undefined && reject(value))) continue;
     const offset = match[0].indexOf(value);
     if (offset < 0) continue;
     const start = match.index + offset;
@@ -226,8 +248,8 @@ function detectInChunk(chunk: DocChunk, chunkIdx: number): Candidate[] {
   addCaptureMatches(out, text, VENTURE_PAREN_RE, 'NAME', chunkIdx, exclusions, 'VENTURE');
   addCaptureMatches(out, text, VENTURE_THE_RE, 'NAME', chunkIdx, exclusions, 'VENTURE');
   addCaptureMatches(out, text, VENTURE_COOWNED_RE, 'NAME', chunkIdx, exclusions, 'VENTURE');
-  addCaptureMatches(out, text, SKU_PREFIX_RE, 'NAME', chunkIdx, exclusions, 'SKU');
-  addCaptureMatches(out, text, SKU_SUFFIX_RE, 'NAME', chunkIdx, exclusions, 'SKU');
+  addCaptureMatches(out, text, SKU_PREFIX_RE, 'NAME', chunkIdx, exclusions, 'SKU', isSkuLabel);
+  addCaptureMatches(out, text, SKU_SUFFIX_RE, 'NAME', chunkIdx, exclusions, 'SKU', isSkuLabel);
 
   return out;
 }
@@ -537,17 +559,22 @@ function sweepValues(
     candidates.push({ chunkIdx, start, end, text, kind: 'NAME', type, token });
   };
 
-  // Pass A: full multi-word values (longest first) for PARTNER/VENTURE/SKU.
+  // Pass A: every full PARTNER/VENTURE/SKU value at EVERY occurrence across
+  // all chunks, with the same token (longest phrase first). Case-insensitive
+  // because the gate matches text values with 'i': a value detected once
+  // ("SCHEDULE A", "Sari Dewi") that survives as "Schedule A" elsewhere both
+  // trips the gate and leaves the blinded text inconsistent. Numbers keep
+  // their own path (Pass C, numeric-form closure).
   const phrases: { value: string; token: string; type: EntityType }[] = [];
   for (const [token, value] of Object.entries(tokenMap)) {
     const type = sweptEntityType(token);
-    if (!type || value.trim().split(/\s+/).length < 2) continue;
+    if (!type || value.trim().length < 2) continue;
     phrases.push({ value: value.trim(), token, type });
   }
   phrases.sort((a, b) => b.value.length - a.value.length);
 
   for (const { value, token, type } of phrases) {
-    const re = new RegExp(`\\b${escapeRegExp(value)}\\b`, 'g');
+    const re = new RegExp(`\\b${escapeRegExp(value)}\\b`, 'gi');
     for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
       const text = chunks[chunkIdx].text;
       re.lastIndex = 0;
@@ -569,7 +596,8 @@ function sweepValues(
       const key = `${token}|${word}`;
       if (sweptNames.has(key)) continue;
       sweptNames.add(key);
-      const re = new RegExp(`\\b${escapeRegExp(word)}\\b`, 'g');
+      // 'gi' mirrors the gate's PARTNER first/last-word matcher (case-insensitive).
+      const re = new RegExp(`\\b${escapeRegExp(word)}\\b`, 'gi');
       for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx += 1) {
         const text = chunks[chunkIdx].text;
         re.lastIndex = 0;
