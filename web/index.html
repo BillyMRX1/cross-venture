@@ -41,7 +41,7 @@
               <circle cx="7.25" cy="7.25" r="4.75" stroke="currentColor" stroke-width="1.5"/>
               <path d="M10.75 10.75L14 14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
             </svg>
-            <input type="search" class="search-input" placeholder="Search" aria-label="Search — not yet available" />
+            <input type="search" class="search-input" placeholder="Search" aria-label="Search" />
           </div>
         </div>
         <div class="topbar-right" aria-label="Runtime status">
@@ -70,10 +70,6 @@
 
       <main id="main" class="workspace">
         <section class="page" id="page-requests">
-          <header class="page-header">
-            <h1 class="page-title">Deal Simulator</h1>
-            <p class="page-sub">Pick a deal and run the deterministic margin check. Becomes the request record page in phase 2.</p>
-          </header>
           <div id="root-simulator"></div>
         </section>
 
@@ -88,7 +84,7 @@
         <section class="page" id="page-documents" hidden>
           <header class="page-header">
             <h1 class="page-title">Documents</h1>
-            <p class="page-sub">Contracts, notes and cost sheets enter here. Five stages run on this device first; only blinded tokens ever reach the cloud stage.</p>
+            <p class="page-sub">Upload contracts, meeting notes or cost sheets (.txt, .md, text PDFs). Files are read on this device.</p>
           </header>
           <div id="root-ingest"></div>
         </section>
@@ -112,7 +108,7 @@
                 <option value="dark">Dark</option>
               </select>
             </div>
-            <p class="hint">Choice persists on this device (key cv-theme) and applies on next load without a flash.</p>
+            <p class="hint">Your choice is saved on this device and applied next time you open the app.</p>
           </section>
         </section>
       </main>

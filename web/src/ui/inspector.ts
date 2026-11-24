@@ -71,7 +71,7 @@ function header(ws: Workspace): HTMLElement {
     el(
       'p',
       {},
-      `Workspace “${ws.name}” · updated ${new Date(ws.updatedAt).toLocaleString()} — left: real text and values held in local memory only; right: the exact string Firebase AI Logic received.`,
+      `Workspace “${ws.name}” · updated ${new Date(ws.updatedAt).toLocaleString()} — left: real text and values held on this device only; right: the exact text the cloud stage received.`,
     ),
   );
 }
@@ -152,7 +152,7 @@ function tokenTableSection(ws: Workspace): HTMLElement {
           {},
           el('td', { class: 'tok' }, tok),
           el('td', { class: 'val strike' }, val),
-          el('td', {}, 'Simulator names, numbers, citations'),
+          el('td', {}, 'Request names, numbers, citations'),
         ),
       ),
     ),
@@ -161,7 +161,7 @@ function tokenTableSection(ws: Workspace): HTMLElement {
     'div',
     { class: 'section' },
     el('h2', { class: 'section-title' }, `Secret key map — ${rows.length} token(s)`),
-    el('p', {}, 'Stored exclusively on this device. The simulator maps these back into the graph before rendering or computing anything.'),
+    el('p', {}, 'Stored exclusively on this device. The Requests page maps these back into the graph before rendering or computing anything.'),
     rows.length === 0 ? el('div', { class: 'note note--warn' }, 'Token map is empty — run ingestion on the Documents page.') : table,
   );
 }

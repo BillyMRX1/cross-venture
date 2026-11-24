@@ -7,7 +7,7 @@ import { loadWorkspaceLocal } from './storage/db';
 import { mountIngest } from './ui/ingest';
 import { mountInspector } from './ui/inspector';
 import { mountRules } from './ui/rules';
-import { mountSimulator, currentVentureId, selectVenture } from './ui/simulator';
+import { mountRequests, currentVentureId, registerVentureSwitcherSync, selectVenture } from './ui/requests';
 import { mountSync } from './ui/sync';
 import { el, errText, hydrate, toast } from './ui/util';
 import { lsGet, lsSet, registerTabSetter, store } from './ui/state';
@@ -79,6 +79,9 @@ function setupVentureSwitcher(): void {
     }
   };
   sel.addEventListener('change', () => selectVenture(sel.value));
+  // Keep switcher and page in sync both ways: opening a record from another
+  // venture repaints this select through the registered setter.
+  registerVentureSwitcherSync(refresh);
   store.subscribe(refresh);
   refresh();
 }
@@ -150,7 +153,7 @@ function restoreWorkspace(): void {
 
 function boot(): void {
   const roots: Array<[string, (root: HTMLElement) => void]> = [
-    ['root-simulator', mountSimulator],
+    ['root-simulator', mountRequests],
     ['root-rules', mountRules],
     ['root-ingest', mountIngest],
     ['root-sync', mountSync],

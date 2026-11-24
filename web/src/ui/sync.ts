@@ -55,7 +55,7 @@ export function mountSync(root: HTMLElement): void {
   window.addEventListener('offline', refreshNet);
   refreshNet();
 
-  const statusBox = el('div', { class: 'note', text: 'Idle. Generate a vault key to pair devices.' });
+  const statusBox = el('div', { class: 'note', text: 'Idle. Create a pairing string to connect your phone.' });
   function setStatus(kind: 'note' | 'note--ok' | 'note--warn' | 'note--err', text: string): void {
     statusBox.className = `note ${kind}`;
     statusBox.textContent = text;
@@ -73,11 +73,11 @@ export function mountSync(root: HTMLElement): void {
 
   /* ---------- generate key + pairing ---------- */
 
-  const genBtn = el('button', { class: 'btn btn-primary' }, 'Generate vault key + pairing string');
+  const genBtn = el('button', { class: 'btn btn-primary' }, 'Pair your phone');
   genBtn.addEventListener('click', () => {
     void (async () => {
       genBtn.disabled = true;
-      setStatus('note', 'Generating AES-256-GCM vault key…');
+      setStatus('note', 'Creating an encryption key on this device…');
       try {
         let key = store.vaultKey;
         let exported = store.vaultKeyString;
@@ -90,7 +90,7 @@ export function mountSync(root: HTMLElement): void {
         const wsId = currentWsId();
         const pairing = b64urlEncode(JSON.stringify({ wsId, key: exported }));
         pairingBox.value = pairing;
-        setStatus('note--ok', `Pairing ready for workspace ${wsId.slice(0, 8)}… — key never leaves your devices except inside this string.`);
+        setStatus('note--ok', 'Pairing ready — the key travels only inside this pairing string.');
       } catch (e) {
         setStatus('note--err', `Vault unavailable: ${errText(e)}`);
       } finally {
@@ -123,14 +123,14 @@ export function mountSync(root: HTMLElement): void {
         return;
       }
       if (!key) {
-        setStatus('note--warn', 'Generate the vault key + pairing string first.');
+        setStatus('note--warn', 'Create the pairing string first.');
         return;
       }
       pushBtn.disabled = true;
-      setStatus('note', 'Encrypting client-side (AES-256-GCM) and writing workspaces/' + ws.id.slice(0, 8) + '…');
+      setStatus('note', 'Encrypting on this device and uploading…');
       try {
         await pushEncrypted(ws.id, { graph: ws.graph, tokenMap: ws.tokenMap }, key);
-        setStatus('note--ok', 'Pushed. Firestore stores only {wsId, ownerUid, iv, cipher, updatedAt} — never plaintext.');
+        setStatus('note--ok', 'Pushed — the server holds only ciphertext, never plaintext.');
         toast('Encrypted workspace pushed', 'ok');
       } catch (e) {
         if (e instanceof ReadOnlyWorkspaceError) {
@@ -151,7 +151,7 @@ export function mountSync(root: HTMLElement): void {
     id: 'pullPairInput',
     spellcheck: 'false',
     'aria-label': 'Paste a pairing string here to pull the encrypted workspace',
-    placeholder: 'Paste the phone pairing string here (base64url of {wsId, key})…',
+    placeholder: 'Paste the pairing string from your phone here…',
   });
   const pullBtn = el('button', { class: 'btn btn-primary' }, 'Pull & decrypt');
   pullBtn.disabled = !configured;
@@ -186,7 +186,7 @@ export function mountSync(root: HTMLElement): void {
             payloadLog: prev?.payloadLog ?? [],
             updatedAt: Date.now(),
           });
-          setStatus('note--ok', `Workspace ${wsId.slice(0, 8)}… decrypted on-device. The simulator now has the graph.`);
+          setStatus('note--ok', `Workspace ${wsId.slice(0, 8)}… decrypted on this device. The Requests page now has the graph.`);
           toast('Synced workspace loaded', 'ok');
         }
       } catch (e) {
@@ -219,7 +219,7 @@ export function mountSync(root: HTMLElement): void {
           'VITE_APPCHECK_SITE_KEY=…   (App Check reCAPTCHA — required for AI Logic)',
         ].join('\n'),
       ),
-      el('p', { style: 'margin:6px 0 0' }, 'Everything else (ingestion, redaction, simulator, vault key) still runs offline without keys.'),
+      el('p', { style: 'margin:6px 0 0' }, 'Everything else — documents, request checks and drafts — still works offline without these keys.'),
     );
   }
 
@@ -252,24 +252,24 @@ export function mountSync(root: HTMLElement): void {
     el(
       'div',
       { class: 'section' },
-      el('h3', {}, '1 · Vault key & pairing string (TD-4)'),
-      el('p', {}, 'AES-256-GCM key lives only in this browser. The pairing string is base64url({wsId, key}) — the phone imports it, fetches ciphertext, decrypts locally.'),
+      el('h3', {}, '1 · Pair your phone'),
+      el('p', {}, 'The encryption key lives only on this device. The pairing string carries your workspace id and key to the phone, which decrypts the data there.'),
       genBtn,
-      el('div', { class: 'field', style: 'margin-top:12px' }, el('label', {}, 'Vault key (exported JWK, base64url)'), vaultPre),
+      el('div', { class: 'field', style: 'margin-top:12px' }, el('label', {}, 'Vault key (this device only)'), vaultPre),
       el('div', { class: 'field' }, el('label', {}, 'Pairing string'), pairingBox, copyPairBtn),
     ),
     el(
       'div',
       { class: 'section' },
       el('h3', {}, '2 · Push encrypted workspace'),
-      el('p', {}, 'Client-side encrypts {graph, tokenMap}; Firestore document holds only {wsId, ownerUid, iv, cipher, updatedAt}.'),
+      el('p', {}, 'Your workspace is encrypted on this device first. The server stores unreadable ciphertext — never your documents in plain text.'),
       pushBtn,
     ),
     el(
       'div',
       { class: 'section' },
       el('h3', {}, '3 · Pull from another device'),
-      el('p', {}, 'Paste the pairing string here (as the phone would hold it) to verify the full encrypted round-trip.'),
+      el('p', {}, 'Paste the pairing string from the phone to bring its encrypted workspace back to this device.'),
       pullInput,
       el('div', { class: 'btn-row' }, pullBtn),
     ),

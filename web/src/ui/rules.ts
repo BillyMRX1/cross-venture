@@ -1,11 +1,20 @@
-// Rules page (phase 1): lists the DealRuleNodes of the loaded knowledge graph
-// with locally re-hydrated values. Empty state points at the Documents page.
+// Rules page: lists the DealRuleNodes of the loaded knowledge graph with
+// locally re-hydrated values. Empty state points at the Documents page.
+// A request record can deep-link here (goRule) — the matching row gets a
+// focus ring and scrolls into view.
 import type { DealRuleNode, Workspace } from '../types';
-import { goTab, store } from './state';
+import { goTab, registerRuleFocusSetter, store } from './state';
 import { el, hydrate, parseNum, pct } from './util';
+
+let focusRuleId: string | null = null;
 
 export function mountRules(root: HTMLElement): void {
   const render = (): void => renderRules(root);
+  registerRuleFocusSetter((ruleId) => {
+    focusRuleId = ruleId;
+    goTab('rules');
+    render();
+  });
   store.subscribe(render);
   render();
 }
@@ -22,6 +31,16 @@ function renderRules(root: HTMLElement): void {
     return;
   }
   root.replaceChildren(rulesSection(ws));
+  if (focusRuleId) {
+    const row = root.querySelector<HTMLElement>(`[data-rule="${CSS.escape(focusRuleId)}"]`);
+    if (row) {
+      row.style.outline = '2px solid var(--brand)';
+      row.style.outlineOffset = '2px';
+      row.scrollIntoView({ block: 'center' });
+    } else {
+      focusRuleId = null;
+    }
+  }
 }
 
 function rulesSection(ws: Workspace): HTMLElement {
@@ -32,7 +51,7 @@ function rulesSection(ws: Workspace): HTMLElement {
     const ventureName = venture ? hydrate(ws.tokenMap, venture.venture_token) || venture.venture_id : r.venture_id;
     return el(
       'tr',
-      {},
+      { 'data-rule': r.rule_id },
       el('td', {}, r.rule_id),
       el('td', {}, ventureName),
       el('td', {}, cap !== null ? pct(cap) : 'no cap — solo venture'),

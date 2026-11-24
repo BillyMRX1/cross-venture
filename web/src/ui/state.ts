@@ -75,3 +75,16 @@ export function registerTabSetter(fn: (tab: string) => void): void {
 export function goTab(tab: string): void {
   if (tabSetter) tabSetter(tab);
 }
+
+/* ---------- rule focus (registered by rules.ts, used by the request record) ---------- */
+
+let ruleFocusSetter: ((ruleId: string) => void) | null = null;
+
+export function registerRuleFocusSetter(fn: (ruleId: string) => void): void {
+  ruleFocusSetter = fn;
+}
+
+/** Open the Rules page scrolled to the given rule. */
+export function goRule(ruleId: string): void {
+  if (ruleFocusSetter) ruleFocusSetter(ruleId);
+}

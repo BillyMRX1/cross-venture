@@ -18,9 +18,9 @@ import { el, errText, newId, toast } from './util';
 import { isSpaFallback } from '../ingest/spaFallback';
 
 /**
- * Sample docs (TD-6). Each entry lists candidate paths under /sample-docs/:
- * the canonical names from the task spec first, then the A1/A2/A3/B1 variants
- * actually shipped by WS-1, so the seed button works against either layout.
+ * Sample docs. Each entry lists candidate paths under /sample-docs/:
+ * the canonical names first, then the A1/A2/A3/B1 variants that actually
+ * shipped, so the seed button works against either layout.
  */
 const SAMPLE_DOCS: Array<{ title: string; paths: string[] }> = [
   { title: 'Atelier Emily partnership agreement', paths: ['atelier-emily-partnership-agreement.md', 'A1-atelier-emily-partnership-agreement.md'] },
@@ -356,7 +356,7 @@ export function mountIngest(root: HTMLElement): void {
         setStatus('note--warn', `Sample fetch problems: ${missing.join(' · ')}`);
       }
       if (sources.length === 0) {
-        setStatus('note--err', 'No sample docs available. Serve them from web/public/sample-docs/ (WS-1) or upload files instead.');
+        setStatus('note--err', 'No sample docs available — upload your own files instead.');
         sampleBtn.disabled = false;
         return;
       }
@@ -376,7 +376,7 @@ export function mountIngest(root: HTMLElement): void {
     'div',
     { class: 'section' },
     el('h2', { class: 'section-title' }, 'Upload files'),
-    el('p', {}, 'Contracts, meeting notes, cost sheets — .txt, .md or text-layer .pdf (TD-3). Extraction is fully local.'),
+    el('p', {}, 'Upload contracts, meeting notes or cost sheets (.txt, .md, text PDFs). Files are read on this device.'),
     el('div', { class: 'field' }, el('label', { for: 'fileInput' }, 'Documents'), fileInput),
   );
 
@@ -393,8 +393,8 @@ export function mountIngest(root: HTMLElement): void {
   const sampleCard = el(
     'div',
     { class: 'section' },
-    el('h2', { class: 'section-title' }, 'Sample workspace (TD-6)'),
-    el('p', {}, 'Scenario A “Atelier Emily” (co-owned, capped discounts) + Scenario B “Nomad Studio” (solo). Fetches the four sample docs from /sample-docs/.'),
+    el('h2', { class: 'section-title' }, 'Sample workspace'),
+    el('p', {}, 'Two demo ventures — one co-owned with capped discounts, one solo. Nothing is uploaded; everything is read on this device.'),
     sampleBtn,
   );
 
