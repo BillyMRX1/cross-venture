@@ -250,7 +250,7 @@ function renderList(root: HTMLElement): void {
     el('tbody', {}, ...rows),
   );
 
-  root.replaceChildren(header, el('div', { class: 'section' }, table));
+  root.replaceChildren(header, el('div', { class: 'section' }, el('div', { class: 'table-scroll' }, table)));
 }
 
 /* ---------- record view ---------- */
@@ -382,10 +382,14 @@ function renderRecord(root: HTMLElement, rec: RequestRecord): void {
     { class: 'section', 'aria-labelledby': 'sec-pricing' },
     el('h2', { id: 'sec-pricing', class: 'section-title' }, 'Pricing'),
     el(
-      'table',
-      { class: 'data-table' },
-      el('thead', {}, el('tr', {}, ...['', 'Retail', 'Discount', 'Unit price', 'Unit cost', 'Margin'].map((h) => el('th', { scope: 'col' }, h)))),
-      pricingBody,
+      'div',
+      { class: 'table-scroll' },
+      el(
+        'table',
+        { class: 'data-table' },
+        el('thead', {}, el('tr', {}, ...['', 'Retail', 'Discount', 'Unit price', 'Unit cost', 'Margin'].map((h) => el('th', { scope: 'col' }, h)))),
+        pricingBody,
+      ),
     ),
     pricingFoot,
   );
