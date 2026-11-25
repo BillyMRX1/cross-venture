@@ -9,7 +9,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -20,6 +22,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.tasks.Tasks
@@ -27,6 +30,9 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import cv.core.Pairing
 import cv.core.VaultCrypto
 import cv.core.summarizeGraph
@@ -59,12 +65,56 @@ fun CompanionScreen() {
     var pairing by remember { mutableStateOf("") }
     var state by remember { mutableStateOf<UiState>(UiState.Idle) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+
+    fun startLoad(rawPayload: String) {
+        state = UiState.Loading
+        scope.launch {
+            state = runCatching { loadWorkspace(rawPayload) }
+                .getOrElse { e -> UiState.Error(e.message ?: "load failed") }
+        }
+    }
+
+    fun startQrScan() {
+        val options = GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .enableAutoZoom()
+            .build()
+        GmsBarcodeScanning.getClient(context, options)
+            .startScan()
+            .addOnSuccessListener { barcode ->
+                val scanned = barcode.rawValue?.trim().orEmpty()
+                if (scanned.isEmpty()) {
+                    state = UiState.Error("Scanned QR code was empty — try again or paste the pairing string.")
+                } else {
+                    pairing = scanned
+                    startLoad(scanned)
+                }
+            }
+            .addOnCanceledListener {
+                if (state is UiState.Loading) state = UiState.Idle
+            }
+            .addOnFailureListener { e ->
+                state = UiState.Error(e.message ?: "Scanner unavailable — paste the pairing string below.")
+            }
+    }
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Deal Guardian Companion", style = MaterialTheme.typography.headlineSmall)
+        Button(
+            onClick = { startQrScan() },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Scan code")
+        }
+        HorizontalDivider()
+        Text(
+            "Can't scan? Paste the pairing string instead.",
+            style = MaterialTheme.typography.bodySmall,
+        )
         OutlinedTextField(
             value = pairing,
             onValueChange = { pairing = it },
@@ -73,15 +123,9 @@ fun CompanionScreen() {
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
             modifier = Modifier.fillMaxWidth(),
         )
-        Button(onClick = {
-            state = UiState.Loading
-            scope.launch {
-                state = runCatching { loadWorkspace(pairing) }
-                    .getOrElse { e -> UiState.Error(e.message ?: "load failed") }
-            }
-        }) { Text("Load") }
+        OutlinedButton(onClick = { startLoad(pairing) }) { Text("Load") }
         when (val s = state) {
-            UiState.Idle -> Text("Idle.")
+            UiState.Idle -> Text("Tap Scan code and point at the QR code in Settings > Phone sync.")
             UiState.Loading -> Text("Loading…")
             is UiState.Loaded -> Text("Loaded ${s.counts.ventures} venture(s), ${s.counts.products} product(s). Decryption is local; raw content never logged.")
             is UiState.Error -> Text("Error: ${s.message}")

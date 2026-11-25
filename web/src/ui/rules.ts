@@ -84,7 +84,7 @@ function rulesSection(ws: Workspace): HTMLElement {
     { class: 'section' },
     el('h2', { class: 'section-title' }, `Extracted rules — ${rules.length}`),
     el('p', { class: 'hint' }, 'Deal rules the ingestion pipeline extracted from your documents. Discount caps are re-hydrated locally from the Secret Key Map — the cloud never sees the values.'),
-    table,
+    el('div', { class: 'table-scroll' }, table),
   );
 }
 

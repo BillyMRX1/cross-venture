@@ -300,12 +300,13 @@ describe('class-hook contract', () => {
     'evrow', 'evrow--err', 'evrow--ok', 'evtime', 'field', 'field-row', 'grid-2',
     'hint', 'insp-cols', 'is-selected', 'k', 'ledger', 'lidx', 'llabel', 'lnote',
     'lrow', 'lrow--active', 'lrow--done', 'lrow--err', 'lrow--queued', 'lrow--skip',
-    'metric', 'model-chip', 'nav-link', 'nav-list', 'note', 'note--err', 'note--ok',
+    'metric', 'model-chip', 'nav-icon', 'nav-label', 'nav-link', 'nav-list', 'note', 'note--err', 'note--ok',
     'note--warn', 'page', 'page-header', 'page-sub', 'page-title', 'pairing',
     'payload', 'payload--cloud', 'payload-block', 'ph', 'query-chip', 'rule-strip',
     'rule-tile', 'search-box', 'search-input', 'section', 'section-head', 'section-title',
-    'shell', 'sidebar', 'skip-link', 'stat', 'stat-k', 'stat-v', 'stats', 'strike',
-    'summary-head', 'tag', 'theme-toggle', 'tok', 'token-table', 'toast',
+    'shell', 'sidebar', 'skip-link', 'stat', 'stat-k', 'stat-v', 'stats', 'status-dot',
+    'status-dot--muted', 'status-dot--ok', 'status-dot--warn', 'status-menu-btn', 'status-popover',
+    'strike', 'summary-head', 'table-scroll', 'tag', 'theme-toggle', 'tok', 'token-table', 'toast',
     'toast--error', 'toast--in', 'toast--ok', 'toast--out', 'toast--warn', 'toasts',
     'topbar', 'topbar-brand', 'topbar-divider', 'topbar-left', 'topbar-main',
     'topbar-right', 'v', 'val', 'venture-switcher', 'verdict', 'verdict-head',
@@ -316,5 +317,79 @@ describe('class-hook contract', () => {
     // (.section-title -> .section-title-bogus) must NOT satisfy the hook.
     const re = new RegExp(`\\.${cls}(?![\\w-])`);
     expect(css, `missing selector for .${cls}`).toMatch(re);
+  });
+});
+
+function extractMediaBlock(src: string, query: string): string | null {
+  const idx = src.indexOf(query);
+  if (idx < 0) return null;
+  const start = src.indexOf('{', idx);
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start; i < src.length; i++) {
+    if (src[i] === '{') depth += 1;
+    else if (src[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return src.slice(start + 1, i);
+    }
+  }
+  return null;
+}
+
+describe('phone layout contract (<= 480px)', () => {
+  const phoneBlock = extractMediaBlock(css, '@media (max-width: 480px)');
+
+  it('defines a @media (max-width: 480px) block', () => {
+    expect(phoneBlock, '@media (max-width: 480px) block required in styles.css').toBeTruthy();
+  });
+
+  it('arranges topbar as brand + venture switcher + collapsed status menu on row 1 and full-width search below', () => {
+    const block = phoneBlock ?? '';
+    expect(block).toMatch(/\.topbar\s*\{[^}]*display:\s*grid/);
+    expect(block).toMatch(/\.topbar-brand\s*\{[^}]*grid-row:\s*1/);
+    expect(block).toMatch(/\.venture-switcher\s*\{[^}]*grid-row:\s*1/);
+    expect(block).toMatch(/\.search-box\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/);
+    expect(block).toMatch(/\.search-box\s*\{[^}]*grid-row:\s*2/);
+    expect(block).toMatch(/\.status-menu-btn\s*\{[^}]*display:\s*inline-flex/);
+    expect(block).toMatch(/\.status-popover\s*\{[^}]*display:\s*none/);
+    expect(block).toMatch(/\.topbar-right\.is-open\s+\.status-popover\s*\{[^}]*display:\s*flex/);
+  });
+
+  it('turns sidebar into a fixed bottom tab bar with four equal columns', () => {
+    const block = phoneBlock ?? '';
+    expect(block).toMatch(/\.sidebar\s*\{[^}]*position:\s*fixed/);
+    expect(block).toMatch(/\.sidebar\s*\{[^}]*bottom:\s*0/);
+    expect(block).toMatch(/\.nav-list\s*\{[^}]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
+  });
+
+  it('stacks record detail and multi-column grids to a single column', () => {
+    const block = phoneBlock ?? '';
+    expect(block).toMatch(/\.detail-grid[\s\S]*?grid-template-columns:\s*(?:1fr|minmax\(0,\s*1fr\))/);
+    expect(block).toMatch(/\.form-grid[\s\S]*?grid-template-columns:\s*(?:1fr|minmax\(0,\s*1fr\))/);
+    expect(block).toMatch(/\.meta-grid[\s\S]*?grid-template-columns:\s*(?:1fr|minmax\(0,\s*1fr\))/);
+  });
+
+  it('keeps tables scrolling inside .table-scroll rather than the page', () => {
+    const block = phoneBlock ?? '';
+    expect(block).toMatch(/\.table-scroll\s*\{[^}]*overflow-x:\s*auto/);
+    expect(block).toMatch(/\.table-scroll\s+\.data-table\s*\{[^}]*min-width:/);
+    expect(block).toMatch(/\.table-scroll\s+\.token-table\s*\{[^}]*min-width:/);
+  });
+
+  it('enforces >= 44px touch targets for interactive controls on phones', () => {
+    const block = phoneBlock ?? '';
+    for (const selector of [
+      /\.venture-switcher\s*\{[^}]*min-height:\s*44px/,
+      /\.search-input\s*\{[^}]*min-height:\s*44px/,
+      /\.status-menu-btn\s*\{[^}]*min-height:\s*44px/,
+      /\.status-menu-btn\s*\{[^}]*min-width:\s*44px/,
+      /\.nav-link\s*\{[^}]*min-height:\s*44px/,
+      /\.btn\s*\{[^}]*min-height:\s*44px/,
+      /\.breadcrumb\s*\{[^}]*min-height:\s*44px/,
+      /\.link\s*\{[^}]*min-height:\s*44px/,
+      /\.clause-link\s*\{[^}]*min-height:\s*44px/,
+    ]) {
+      expect(block, `expected 44px touch target rule matching ${selector}`).toMatch(selector);
+    }
   });
 });

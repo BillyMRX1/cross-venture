@@ -3,6 +3,7 @@ import { getAuth } from 'firebase/auth';
 import { decryptJson, encryptJson, importVaultKey } from '../crypto/vault';
 import { ensureSignedIn, getDb } from '../firebase';
 import type { KnowledgeGraph, TokenMap, Workspace } from '../types';
+import { deduplicateWorkspace } from './workspaceOps';
 
 /** Thrown when this device may read but not write a cloud workspace (foreign-owned or unowned legacy). */
 export class ReadOnlyWorkspaceError extends Error {
@@ -90,26 +91,77 @@ export async function saveWorkspaceLocal(ws: Workspace): Promise<void> {
 }
 
 /**
- * Loads the most recently updated Workspace from IndexedDB.
- * Returns null if none saved or if IndexedDB is unavailable.
+ * Clears all saved Workspaces from IndexedDB.
+ * No-ops gracefully when IndexedDB is unavailable (e.g. Node).
  */
-export async function loadWorkspaceLocal(): Promise<Workspace | null> {
+export async function clearWorkspacesLocal(): Promise<void> {
   if (typeof indexedDB === 'undefined') {
-    return null;
+    return;
   }
+  const db = await openWorkspaceDB();
+  try {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    const store = tx.objectStore(STORE_NAME);
+    const clearReq = store.clear();
+    await new Promise<void>((resolve, reject) => {
+      clearReq.onerror = () => reject(clearReq.error ?? new Error('IndexedDB clear failed'));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error('IndexedDB transaction failed'));
+      tx.onabort = () => reject(tx.error ?? new Error('IndexedDB transaction aborted'));
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Loads the most recently updated Workspace from IndexedDB and runs
+ * startup deduplication migration. If duplicates are merged, persists
+ * the deduplicated Workspace back to IndexedDB.
+ */
+export async function loadAndMigrateWorkspaceLocal(): Promise<{
+  workspace: Workspace | null;
+  migrated: boolean;
+  ventureIdMap: Record<string, string>;
+}> {
+  if (typeof indexedDB === 'undefined') {
+    return { workspace: null, migrated: false, ventureIdMap: {} };
+  }
+  let latest: Workspace | null = null;
   const db = await openWorkspaceDB();
   try {
     const tx = db.transaction(STORE_NAME, 'readonly');
     const store = tx.objectStore(STORE_NAME);
     const all = (await promisifyRequest(store.getAll())) as Workspace[];
-    if (!Array.isArray(all) || all.length === 0) {
-      return null;
+    if (Array.isArray(all) && all.length > 0) {
+      all.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+      latest = all[0] ?? null;
     }
-    all.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-    return all[0] ?? null;
   } finally {
     db.close();
   }
+
+  if (!latest) {
+    return { workspace: null, migrated: false, ventureIdMap: {} };
+  }
+
+  const { workspace, changed, ventureIdMap } = deduplicateWorkspace(latest);
+  if (changed) {
+    await saveWorkspaceLocal(workspace);
+    return { workspace, migrated: true, ventureIdMap };
+  }
+
+  return { workspace, migrated: false, ventureIdMap: {} };
+}
+
+/**
+ * Loads the most recently updated Workspace from IndexedDB,
+ * applying startup deduplication migration automatically.
+ * Returns null if none saved or if IndexedDB is unavailable.
+ */
+export async function loadWorkspaceLocal(): Promise<Workspace | null> {
+  const { workspace } = await loadAndMigrateWorkspaceLocal();
+  return workspace;
 }
 
 /**

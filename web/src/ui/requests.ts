@@ -4,6 +4,7 @@
 // pricing table, policy checks, drafts and approval copy all recompute live
 // from the deterministic margin engine as fields change.
 import type { Badge, Workspace } from '../types';
+import { cleanProductOptions } from './productPicker';
 import { fuzzyMatch, parseQuery } from './query';
 import {
   approvalInfo,
@@ -50,6 +51,24 @@ export function selectVenture(ventureId: string): void {
     const rec = records.find((r) => r.id === view.id);
     if (rec && rec.ventureId !== ventureId) st.view = { kind: 'list' };
   }
+  if (switcherSync) switcherSync();
+  if (mountedRoot) render();
+}
+
+/** Reload cached request records from localStorage (e.g. after Data settings clears or removes a venture). */
+export function syncRequestsFromStorage(): void {
+  records = loadRequests();
+  const view = st.view;
+  if (view.kind === 'record' && !records.some((r) => r.id === view.id)) {
+    st.view = { kind: 'list' };
+  }
+  const ws = store.workspace;
+  if (!ws || ws.graph.ventures.length === 0) {
+    st.ventureId = '';
+  } else if (!ws.graph.ventures.some((v) => v.venture_id === st.ventureId)) {
+    st.ventureId = ws.graph.ventures[0].venture_id;
+  }
+  if (switcherSync) switcherSync();
   if (mountedRoot) render();
 }
 
@@ -163,7 +182,12 @@ function render(): void {
   const root = mountedRoot;
   if (!root) return;
   const ws = store.workspace;
-  if (ws && ws.graph.ventures.length > 0 && !ws.graph.ventures.some((v) => v.venture_id === st.ventureId)) {
+  if (!ws || ws.graph.ventures.length === 0) {
+    if (st.ventureId !== '') {
+      st.ventureId = '';
+      if (switcherSync) switcherSync();
+    }
+  } else if (!ws.graph.ventures.some((v) => v.venture_id === st.ventureId)) {
     st.ventureId = ws.graph.ventures[0].venture_id;
     if (switcherSync) switcherSync();
   }
@@ -250,7 +274,7 @@ function renderList(root: HTMLElement): void {
     el('tbody', {}, ...rows),
   );
 
-  root.replaceChildren(header, el('div', { class: 'section' }, table));
+  root.replaceChildren(header, el('div', { class: 'section' }, el('div', { class: 'table-scroll' }, table)));
 }
 
 /* ---------- record view ---------- */
@@ -275,7 +299,7 @@ function emptyDeal(errors: string[]): RecordDeal {
 function renderRecord(root: HTMLElement, rec: RequestRecord): void {
   const ws = store.workspace;
   let deal: RecordDeal = ws ? computeRecordDeal(ws, rec) : emptyDeal(['No workspace loaded — open Documents to load one. This request keeps its values.']);
-  const ventureProducts = ws ? ws.graph.products.filter((p) => p.venture_id === rec.ventureId) : [];
+  const productOptions = ws ? cleanProductOptions(ws, rec.ventureId) : [];
 
   /* header */
   const breadcrumb = el('button', { class: 'breadcrumb', type: 'button' }, '‹ Requests');
@@ -313,16 +337,18 @@ function renderRecord(root: HTMLElement, rec: RequestRecord): void {
     refresh();
   });
 
+  const hasSelectedOption = productOptions.some((o) => o.skuId === rec.skuId);
   const productSel = el(
     'select',
-    { id: 'reqProduct', ...(ventureProducts.length === 0 ? { disabled: '' } : {}) },
-    el('option', { value: '', ...(rec.skuId === '' ? { selected: '' } : {}) }, ventureProducts.length === 0 ? 'No products yet' : 'Pick a product'),
-    ...(ws
-      ? ventureProducts.map((p) => {
-          const label = skuNameOf(ws, p.sku_id) || p.sku_id;
-          return el('option', { value: p.sku_id, ...(p.sku_id === rec.skuId ? { selected: '' } : {}) }, label);
-        })
-      : []),
+    { id: 'reqProduct', ...(productOptions.length === 0 ? { disabled: '' } : {}) },
+    el(
+      'option',
+      { value: '', ...(!hasSelectedOption ? { selected: '' } : {}) },
+      productOptions.length === 0 ? 'No products yet' : 'Pick a product',
+    ),
+    ...productOptions.map((o) =>
+      el('option', { value: o.skuId, ...(o.skuId === rec.skuId ? { selected: '' } : {}) }, o.label),
+    ),
   );
   productSel.addEventListener('change', () => {
     rec.skuId = productSel.value;
@@ -382,10 +408,14 @@ function renderRecord(root: HTMLElement, rec: RequestRecord): void {
     { class: 'section', 'aria-labelledby': 'sec-pricing' },
     el('h2', { id: 'sec-pricing', class: 'section-title' }, 'Pricing'),
     el(
-      'table',
-      { class: 'data-table' },
-      el('thead', {}, el('tr', {}, ...['', 'Retail', 'Discount', 'Unit price', 'Unit cost', 'Margin'].map((h) => el('th', { scope: 'col' }, h)))),
-      pricingBody,
+      'div',
+      { class: 'table-scroll' },
+      el(
+        'table',
+        { class: 'data-table' },
+        el('thead', {}, el('tr', {}, ...['', 'Retail', 'Discount', 'Unit price', 'Unit cost', 'Margin'].map((h) => el('th', { scope: 'col' }, h)))),
+        pricingBody,
+      ),
     ),
     pricingFoot,
   );
@@ -616,14 +646,14 @@ async function parseBuyerMessage(
       rec.qty = p.qty;
       qtyInput.value = String(p.qty);
     }
-    const products = g.graph.products.filter((x) => x.venture_id === rec.ventureId);
-    const labels = products.map((x) => skuNameOf(g, x.sku_id) || x.sku_id);
+    const products = cleanProductOptions(g, rec.ventureId);
+    const labels = products.map((x) => x.rawName);
     const hit = fuzzyMatch(p.skuHint ?? text, labels);
     if (hit) {
-      const node = products.find((x) => (skuNameOf(g, x.sku_id) || x.sku_id) === hit);
+      const node = products.find((x) => x.rawName === hit);
       if (node) {
-        rec.skuId = node.sku_id;
-        productSel.value = node.sku_id;
+        rec.skuId = node.skuId;
+        productSel.value = node.skuId;
       }
     }
     persist();

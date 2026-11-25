@@ -29,7 +29,7 @@ vi.mock('./firebase', () => ({
 }));
 
 import { TransientExhaustedError, TRANSIENT_BUSY_MESSAGE } from './cloud/transient';
-import { generate } from './hybrid';
+import { SYNTHESIZE_MAX_ATTEMPTS, generate } from './hybrid';
 
 function transient500(): Error & { customCode: number } {
   const e = new Error(
@@ -113,4 +113,50 @@ describe('generate(synthesize) transient handling', () => {
     const err = await generate('synthesize', 'prompt', {}).catch((e: unknown) => e);
     expect(err).toBe(e404); // honest surfacing, never dressed as busy
   }, 15000);
+
+  it('adds jitter to concurrent retries (including Retry-After) and caps attempts at SYNTHESIZE_MAX_ATTEMPTS', async () => {
+    expect(SYNTHESIZE_MAX_ATTEMPTS).toBe(3);
+
+    // Two concurrent calls both hit Retry-After: 2s — jitter spreads their wait times so they do not stampede.
+    const waitsA: number[] = [];
+    const waitsB: number[] = [];
+    const err429 = () => {
+      const e = new Error('rate limited [429]') as Error & { customCode: number; retryAfter: number };
+      e.customCode = 429;
+      e.retryAfter = 2;
+      return e;
+    };
+
+    const callCounts = new Map<string, number>();
+    h.getModelMock.mockImplementation(() => ({
+      generateContent: async (prompt: string) => {
+        const n = (callCounts.get(prompt) ?? 0) + 1;
+        callCounts.set(prompt, n);
+        if (n < 3) throw err429();
+        return { response: { text: () => `ok:${prompt}` } } as FakeResult;
+      },
+    }));
+
+    const [ra, rb] = await Promise.all([
+      generate('synthesize', 'docA', {}, {
+        onRetry: (_a, w) => waitsA.push(w),
+        rng: () => 0.1,
+        sleep: async () => {},
+      }),
+      generate('synthesize', 'docB', {}, {
+        onRetry: (_a, w) => waitsB.push(w),
+        rng: () => 0.9,
+        sleep: async () => {},
+      }),
+    ]);
+
+    expect(ra.text).toBe('ok:docA');
+    expect(rb.text).toBe('ok:docB');
+    expect(callCounts.get('docA')).toBe(3);
+    expect(callCounts.get('docB')).toBe(3);
+    expect(waitsA.length).toBe(2);
+    expect(waitsB.length).toBe(2);
+    // Jittered waits must differ between concurrent callers so retries do not stampede.
+    expect(waitsB[0]).toBeGreaterThan(waitsA[0]);
+  });
 });
