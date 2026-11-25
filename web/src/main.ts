@@ -41,6 +41,7 @@ import {
   store,
 } from './ui/state';
 import { initThemeToggle } from './ui/theme';
+import { initTour } from './ui/tour';
 import { mountVentureSwitcherCue, MULTI_VENTURE_HINT_KEY } from './ui/workspaceCue';
 
 const PAGES = ['requests', 'rules', 'documents', 'settings'] as const;
@@ -421,6 +422,7 @@ function boot(): void {
   setupNetwork();
   void registerServiceWorker();
   restoreWorkspace();
+  initTour();
 }
 
 try {
