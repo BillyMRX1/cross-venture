@@ -1,5 +1,6 @@
-// WS-4 Privacy Inspector (FR-3): side-by-side LOCAL device memory vs the
-// EXACT cloud payload, plus a live leak self-check and the token table.
+// Privacy Inspector (FR-3), shown as the "Privacy" section of Settings:
+// side-by-side LOCAL device memory vs the EXACT cloud payload, plus a live
+// leak self-check and the token table.
 import { el, findLeakedValues, type LeakHit } from './util';
 import { goTab, store } from './state';
 import type { PayloadLogEntry, Workspace } from '../types';
@@ -58,19 +59,19 @@ function renderInspector(root: HTMLElement): void {
     nodes.push(blindedPreview(ws));
   }
 
-  nodes.push(tokenTableCard(ws));
+  nodes.push(tokenTableSection(ws));
   root.replaceChildren(...nodes);
 }
 
 function header(ws: Workspace): HTMLElement {
   return el(
     'div',
-    { class: 'card' },
-    el('h2', {}, 'Privacy Firewall Inspector'),
+    { class: 'section' },
+    el('h2', { class: 'section-title' }, 'Privacy'),
     el(
       'p',
       {},
-      `Workspace “${ws.name}” · updated ${new Date(ws.updatedAt).toLocaleString()} — left: real text and values held in local memory only; right: the exact string Firebase AI Logic received.`,
+      `Workspace “${ws.name}” · updated ${new Date(ws.updatedAt).toLocaleString()} — left: real text and values held on this device only; right: the exact text the cloud stage received.`,
     ),
   );
 }
@@ -133,7 +134,7 @@ function blindedPreview(ws: Workspace): HTMLElement {
   return el('div', { class: 'insp-cols' }, localCol, cloudCol);
 }
 
-function tokenTableCard(ws: Workspace): HTMLElement {
+function tokenTableSection(ws: Workspace): HTMLElement {
   const rows = Object.entries(ws.tokenMap);
   const table = el('table', { class: 'token-table' });
   table.append(
@@ -151,17 +152,17 @@ function tokenTableCard(ws: Workspace): HTMLElement {
           {},
           el('td', { class: 'tok' }, tok),
           el('td', { class: 'val strike' }, val),
-          el('td', {}, 'Simulator names, numbers, citations'),
+          el('td', {}, 'Request names, numbers, citations'),
         ),
       ),
     ),
   );
   return el(
     'div',
-    { class: 'card' },
-    el('h2', {}, `Secret key map — ${rows.length} token(s)`),
-    el('p', {}, 'Stored exclusively on this device. The Deal Simulator maps these back into the graph before rendering or computing anything.'),
-    rows.length === 0 ? el('div', { class: 'note note--warn' }, 'Token map is empty — run ingestion.') : table,
+    { class: 'section' },
+    el('h2', { class: 'section-title' }, `Secret key map — ${rows.length} token(s)`),
+    el('p', {}, 'Stored exclusively on this device. The Requests page maps these back into the graph before rendering or computing anything.'),
+    rows.length === 0 ? el('div', { class: 'note note--warn' }, 'Token map is empty — run ingestion on the Documents page.') : table,
   );
 }
 
@@ -169,10 +170,10 @@ function emptyState(): HTMLElement {
   const box = el(
     'div',
     { class: 'empty' },
-    el('h2', { class: 'hero-head' }, 'No workspace yet'),
-    el('p', { class: 'hero-sub' }, 'Ingest documents first — the Inspector needs the local chunks and the exact payloads the cloud call produced.'),
-    el('div', { class: 'cta-row' }, el('button', { class: 'btn btn-primary' }, 'Go to Ingest')),
+    el('h2', { class: 'empty-title' }, 'No workspace yet'),
+    el('p', { class: 'empty-sub' }, 'Load documents first — the Privacy inspector needs the local chunks and the exact payloads the cloud call produced.'),
+    el('div', { class: 'cta-row' }, el('button', { class: 'btn btn-primary' }, 'Open Documents')),
   );
-  box.querySelector('button')?.addEventListener('click', () => goTab('ingest'));
+  box.querySelector('button')?.addEventListener('click', () => goTab('documents'));
   return box;
 }

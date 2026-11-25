@@ -70,11 +70,55 @@ describe('findLeakedValues — PARTNER name partials (mirrors anonymizer sweep p
   });
 });
 
+describe('findLeakedValues — placeholder tokens are masked before scanning', () => {
+  // Real-world PDF regression (2026-11-24): docs with 10+ tokens of a type put
+  // strings like [COST_15] in the prompt; a known short value "15" matched the
+  // digits INSIDE the token and the gate blocked every send.
+
+  it('token index digits never count as a leak: [COST_15] with known "15" → no hit', () => {
+    const prompt = 'body [COST_15] [DISCOUNT_CAP_10] [PRICE_22] [VALUE_28] end';
+    const map = {
+      '[COST_1]': '15',
+      '[DISCOUNT_CAP_1]': '10',
+      '[PRICE_1]': '22',
+      '[MARGIN_FLOOR_1]': '28',
+    };
+    expect(findLeakedValues(map, prompt, 'x').hits).toEqual([]);
+  });
+
+  it('real values written next to tokens still hit: "[COST_1] 15%" with known "15%"', () => {
+    const { hits } = findLeakedValues({ '[COST_1]': '15%' }, 'see [COST_1] 15% off list', 'x');
+    expect(hits.length).toBe(1);
+    expect(hits[0].token).toBe('[COST_1]');
+  });
+
+  it('legend entries do not self-trip: "[MARGIN_FLOOR_15] (type: MARGIN_FLOOR)" with known "15"', () => {
+    const legend = '[MARGIN_FLOOR_15] (type: MARGIN_FLOOR)';
+    expect(findLeakedValues({ '[COST_1]': '15' }, legend, 'x').hits).toEqual([]);
+  });
+
+  it('masking keeps boundaries for text values too: "[SKU_2] Widget Deluxe" still hits "Widget Deluxe"', () => {
+    const { hits } = findLeakedValues({ '[SKU_1]': 'Widget Deluxe' }, 'order [SKU_2] Widget Deluxe now', 'x');
+    expect(hits.length).toBe(1);
+  });
+});
+
 describe('findLeakedValues — honest checked count', () => {
   it('counts only values actually scanned (skips <2-char values)', () => {
     const map = { '[COST_1]': '40', '[PARTNER_1]': 'Sari Dewi', '[X_1]': 'X' };
     const scan = findLeakedValues(map, 'nothing relevant here', 'x');
     expect(scan.checked).toBe(2);
     expect(scan.hits.length).toBe(0);
+  });
+});
+
+describe('findLeakedValues — chunk headers are app metadata, not document text', () => {
+  it('a page number in the [DOC_n p.N #M] header never counts as a leak', () => {
+    const { hits } = findLeakedValues({ '[VALUE_1]': '10' }, '[DOC_1 p.10 #9] --- page [VALUE_1] ---', 'test');
+    expect(hits).toEqual([]);
+  });
+  it('the same value in the body text still counts', () => {
+    const { hits } = findLeakedValues({ '[VALUE_1]': '10' }, '[DOC_1 p.1 #0] the cap is 10 units', 'test');
+    expect(hits.length).toBe(1);
   });
 });

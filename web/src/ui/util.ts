@@ -170,9 +170,32 @@ export function numericForms(int: string, dec: string | null): string[] {
   return [...forms];
 }
 
+// Placeholder tokens appear in the outbound prompt as chunk-body tokens
+// ([COST_15]), legend lines ([DISCOUNT_CAP_10] (type: ...)) and suffixed
+// forms ([PARTNER_2#3]). Their INDEX DIGITS are not real values: a known
+// short number like "15" used to match the "15" inside "[COST_15]" and
+// blocked every send once a doc produced 10+ tokens of a type. Mask every
+// token to a same-length run of '~' before scanning, so no digit inside a
+// token can match while every boundary around the token stays exactly as
+// it was ('[COST_1] 15' -> '~~~~~~~~ 15' still hits "15"). Values can never
+// themselves contain '[', so masking can only remove token-internal
+// matches — real verbatim values are never masked away.
+const PLACEHOLDER_TOKEN_RE = /\[[A-Z][A-Z0-9_]*_\d+(?:#\d+)?\]/g;
+// Chunk headers ("[DOC_1 p.10 #9]", built by graphExtractor.formatChunkLine
+// from chunk metadata) carry page/index numbers, not document text. A known
+// value "10" matched the "10" in "p.10" and blocked real multi-page PDFs.
+const CHUNK_HEADER_RE = /\[DOC_\d+ p\.\d+ #\d+\]/g;
+
+function maskPlaceholderTokens(text: string): string {
+  return text
+    .replace(CHUNK_HEADER_RE, (header) => '~'.repeat(header.length))
+    .replace(PLACEHOLDER_TOKEN_RE, (token) => '~'.repeat(token.length));
+}
+
 export function findLeakedValues(tokenMap: TokenMap, cloudText: string, where: string): LeakScan {
   const hits: LeakHit[] = [];
   let checked = 0;
+  const scanned = maskPlaceholderTokens(cloudText);
   for (const [token, raw] of Object.entries(tokenMap)) {
     const value = (raw ?? '').trim();
     if (value.length < 2) continue;
@@ -185,7 +208,7 @@ export function findLeakedValues(tokenMap: TokenMap, cloudText: string, where: s
         // reject only a preceding digit or a separator glued to a digit, so
         // 'Rp.1250' / 'a,1250' still hit while '1400' never matches '40'.
         const re = new RegExp(`(?<![0-9])(?<![0-9][.,])${escapeRe(form)}(?![0-9])`);
-        if (re.test(cloudText)) {
+        if (re.test(scanned)) {
           matched = form;
           break;
         }
@@ -195,7 +218,7 @@ export function findLeakedValues(tokenMap: TokenMap, cloudText: string, where: s
     }
     checked += 1;
     const re = new RegExp(`(?:^|[^A-Za-z])${escapeRe(value)}(?![A-Za-z])`, 'i');
-    if (re.test(cloudText)) {
+    if (re.test(scanned)) {
       hits.push({ token, value, where });
       continue;
     }
@@ -206,7 +229,7 @@ export function findLeakedValues(tokenMap: TokenMap, cloudText: string, where: s
           const w = part.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
           if (w.length < 3) continue;
           const partRe = new RegExp(`(?:^|[^A-Za-z])${escapeRe(w)}(?![A-Za-z])`, 'i');
-          if (partRe.test(cloudText)) {
+          if (partRe.test(scanned)) {
             hits.push({ token, value: w, where });
             break;
           }

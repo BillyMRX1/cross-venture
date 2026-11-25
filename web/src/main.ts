@@ -1,4 +1,4 @@
-// WS-4 app entry: tab shell (persisted, keyboard-accessible), status chips,
+// App entry: Stripe-style shell (top bar + sidebar nav), status chips,
 // offline banner, service-worker registration, local workspace restore.
 // Must never crash on load even while other workstreams are stubs.
 import './styles.css';
@@ -6,30 +6,45 @@ import { onDeviceStatus } from './hybrid';
 import { loadWorkspaceLocal } from './storage/db';
 import { mountIngest } from './ui/ingest';
 import { mountInspector } from './ui/inspector';
-import { mountSimulator } from './ui/simulator';
+import { mountRules } from './ui/rules';
+import { mountRequests, currentVentureId, registerVentureSwitcherSync, selectVenture } from './ui/requests';
 import { mountSync } from './ui/sync';
-import { el, errText, toast } from './ui/util';
+import { el, errText, hydrate, toast } from './ui/util';
 import { lsGet, lsSet, registerTabSetter, store } from './ui/state';
 import { initThemeToggle } from './ui/theme';
 
-const TABS = ['ingest', 'inspector', 'sync', 'simulator'] as const;
-type TabId = (typeof TABS)[number];
+const PAGES = ['requests', 'rules', 'documents', 'settings'] as const;
+type PageId = (typeof PAGES)[number];
 const TAB_KEY = 'cv.tab';
 
-function mountTabs(): void {
-  const btns = TABS.map((id) => document.getElementById(`tabbtn-${id}`)).filter((b): b is HTMLButtonElement => b !== null);
-  const panels = TABS.map((id) => document.getElementById(`tab-${id}`)).filter((p): p is HTMLElement => p !== null);
-  const tablist = document.querySelector<HTMLElement>('.tabs[role="tablist"]');
+// Old tab ids keep working: cross-links (goTab) and persisted state from
+// before the nav redesign map onto the new pages.
+const LEGACY_TAB_MAP: Record<string, PageId> = {
+  ingest: 'documents',
+  simulator: 'requests',
+  inspector: 'settings',
+  sync: 'settings',
+};
+
+function mountNav(): void {
+  const btns = PAGES
+    .map((id) => document.querySelector<HTMLButtonElement>(`.nav-link[data-page="${id}"]`))
+    .filter((b): b is HTMLButtonElement => b !== null);
+  const pages = PAGES
+    .map((id) => document.getElementById(`page-${id}`))
+    .filter((p): p is HTMLElement => p !== null);
 
   function setTab(id: string): void {
-    const target = (TABS as readonly string[]).includes(id) ? (id as TabId) : 'ingest';
+    const mapped = LEGACY_TAB_MAP[id] ?? id;
+    const target: PageId = (PAGES as readonly string[]).includes(mapped) ? (mapped as PageId) : 'requests';
     for (const b of btns) {
-      const on = b.dataset.tab === target;
-      b.setAttribute('aria-selected', String(on));
-      b.tabIndex = on ? 0 : -1;
+      const on = b.dataset.page === target;
+      b.classList.toggle('is-selected', on);
+      if (on) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
     }
-    for (const p of panels) {
-      p.hidden = p.id !== `tab-${target}`;
+    for (const p of pages) {
+      p.hidden = p.id !== `page-${target}`;
     }
     lsSet(TAB_KEY, target);
   }
@@ -37,30 +52,38 @@ function mountTabs(): void {
   registerTabSetter(setTab);
 
   for (const b of btns) {
-    b.setAttribute('aria-selected', 'false');
-    b.tabIndex = -1;
-    b.addEventListener('click', () => setTab(b.dataset.tab ?? 'ingest'));
-  }
-
-  if (tablist) {
-    tablist.addEventListener('keydown', (ev: KeyboardEvent) => {
-      if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(ev.key)) return;
-      const current = btns.findIndex((b) => b.getAttribute('aria-selected') === 'true');
-      let next = current;
-      if (ev.key === 'ArrowRight') next = (current + 1 + btns.length) % btns.length;
-      else if (ev.key === 'ArrowLeft') next = (current - 1 + btns.length) % btns.length;
-      else if (ev.key === 'Home') next = 0;
-      else next = btns.length - 1;
-      const b = btns[next];
-      if (!b) return;
-      ev.preventDefault();
-      setTab(b.dataset.tab ?? 'ingest');
-      b.focus();
-    });
+    b.addEventListener('click', () => setTab(b.dataset.page ?? 'requests'));
   }
 
   const saved = lsGet(TAB_KEY);
-  setTab(saved ?? 'ingest');
+  setTab(saved ?? 'requests');
+}
+
+function setupVentureSwitcher(): void {
+  const sel = document.querySelector<HTMLSelectElement>('#ventureSwitch');
+  if (!sel) return;
+  const refresh = (): void => {
+    const ws = store.workspace;
+    sel.replaceChildren();
+    if (!ws || ws.graph.ventures.length === 0) {
+      sel.append(el('option', { value: '' }, 'No workspace loaded'));
+      sel.disabled = true;
+      return;
+    }
+    sel.disabled = false;
+    const current = currentVentureId();
+    for (const v of ws.graph.ventures) {
+      const opt = el('option', { value: v.venture_id }, hydrate(ws.tokenMap, v.venture_token) || v.venture_id);
+      if (v.venture_id === current) opt.selected = true;
+      sel.append(opt);
+    }
+  };
+  sel.addEventListener('change', () => selectVenture(sel.value));
+  // Keep switcher and page in sync both ways: opening a record from another
+  // venture repaints this select through the registered setter.
+  registerVentureSwitcherSync(refresh);
+  store.subscribe(refresh);
+  refresh();
 }
 
 function refreshDeviceChip(): void {
@@ -130,16 +153,18 @@ function restoreWorkspace(): void {
 
 function boot(): void {
   const roots: Array<[string, (root: HTMLElement) => void]> = [
-    ['tab-ingest', mountIngest],
-    ['tab-inspector', mountInspector],
-    ['tab-sync', mountSync],
-    ['tab-simulator', mountSimulator],
+    ['root-simulator', mountRequests],
+    ['root-rules', mountRules],
+    ['root-ingest', mountIngest],
+    ['root-sync', mountSync],
+    ['root-inspector', mountInspector],
   ];
   for (const [id, mount] of roots) {
     const node = document.getElementById(id);
     if (node) mount(node);
   }
-  mountTabs();
+  mountNav();
+  setupVentureSwitcher();
   initThemeToggle();
   refreshDeviceChip();
   setupNetwork();

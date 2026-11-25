@@ -2,20 +2,23 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-// Design contract v2 (owner pick 2026-11-24: BOTH concepts as modes).
-// Concept A 'Manifest Light' = light DEFAULT, Concept B 'Terminal Control' = dark,
-// switched by prefers-color-scheme + a persisted manual toggle. Modes are TOKEN SETS
-// ONLY: identical property vocabulary, identical layout rules. Values come verbatim
-// from redesign-mockups/STEP2_TOKEN_SHEET.md. If anyone re-introduces one-off hexes,
-// off-scale spacing, mixed color meanings, or breaks the palette symmetry, red here.
+// Design contract v3 (owner pick 2026-11-24: Stripe Dashboard style).
+// White page, hairline dividers, unboxed stacked sections, purple accent.
+// Light is the default; DARK is the same token vocabulary with dark neutrals
+// and the same purple — modes are TOKEN SETS ONLY. Fonts are self-hosted from
+// /fonts/ (Source Sans 3 + Source Code Pro, OFL); external font URLs are a red.
+// If anyone re-introduces one-off hexes, an external font, a boxed-card shell,
+// or breaks the light/dark vocabulary symmetry, red here.
 
 // Read from disk rather than a ?raw import: vitest stubs CSS modules to ''
 // unless css handling is enabled, and the contract wants the real text.
 const css = readFileSync(resolve(__dirname, '../styles.css'), 'utf8');
 const html = readFileSync(resolve(__dirname, '../../index.html'), 'utf8');
+const mainTs = readFileSync(resolve(__dirname, '../main.ts'), 'utf8');
+const stateTs = readFileSync(resolve(__dirname, 'state.ts'), 'utf8');
 
 // Palette blocks = any :root-anchored custom-property block (light default,
-// media dark, explicit [data-theme] variants). Everything else must be hex-free.
+// media dark, explicit [data-theme] variant). Everything else must be hex-free.
 function paletteBlocks(src: string): string[] {
   return src.match(/:root[^{]*\{[^}]*\}/g) ?? [];
 }
@@ -26,91 +29,233 @@ function propsIn(block: string): string[] {
   return [...block.matchAll(/(--[a-zA-Z0-9-]+)\s*:/g)].map((m) => m[1]).sort();
 }
 
-// Signature colors, verbatim from the sheet (A light / B dark).
-const A_SIG = ['#F5F3EE', '#CA4814', '#136F4A', '#1E4E8C'];
-const B_SIG = ['#12130F', '#E59A24', '#34C77B', '#7A97C4'];
+const light = paletteBlocks(css).find((b) => b.includes('--bg-page: #ffffff'));
+const dark = paletteBlocks(css).filter((b) => b.includes('--bg-page: #101118'));
 
-describe('dual-mode palette contract', () => {
-  const blocks = paletteBlocks(css);
+// Signature tokens, verbatim from the picked mock (cv-stripe.html).
+const LIGHT_SIG = [
+  '#ffffff', '#ebeef1', '#d5dbe1', '#1a1b25', '#30313d', '#414552', '#687385',
+  '#635bff', '#5349f5', '#f5f6ff', '#ffe7f2', '#b3093c', '#d7f7c2', '#006908',
+  '#fcedb9', '#a82c00', '#ebeef1',
+];
 
-  it('has a light default block with the concept-A sheet colors', () => {
-    const light = blocks.find((b) => b.includes('#F5F3EE'));
-    expect(light, 'concept A palette (sheet STEP2_TOKEN_SHEET.md) must be the light default').toBeTruthy();
-    for (const sig of A_SIG) expect(light!).toContain(sig);
+describe('stripe palette contract (light default, dark token set)', () => {
+  it('has a light default block with the picked-mock colors', () => {
+    expect(light, 'light palette block (--bg-page: #ffffff) required').toBeTruthy();
+    for (const sig of LIGHT_SIG) expect(light!, `light block must carry ${sig}`).toContain(sig);
   });
 
-  it('has dark blocks with the concept-B sheet colors (contrast-bumped text-dim)', () => {
-    const dark = blocks.filter((b) => b.includes('#12130F'));
-    expect(dark.length, 'concept B must serve BOTH prefers-color-scheme and explicit [data-theme="dark"]').toBeGreaterThanOrEqual(2);
-    for (const b of dark) for (const sig of B_SIG) expect(b, `dark block must carry ${sig}`).toContain(sig);
-    for (const b of dark) expect(b, "B's mandatory gray bump").toContain('#9C9E93');
+  it('has dark blocks for BOTH prefers-color-scheme and explicit [data-theme="dark"]', () => {
+    expect(dark.length, 'dark must serve the media query AND the manual toggle').toBeGreaterThanOrEqual(2);
+    for (const b of dark) expect(b, 'same purple in dark mode').toContain('#635bff');
   });
 
-  it('both palettes define the SAME vocabulary (modes are token sets only)', () => {
-    const light = blocks.find((b) => b.includes('#F5F3EE'))!;
-    const dark = blocks.filter((b) => b.includes('#12130F'))![0];
-    expect(propsIn(dark), 'dark vocabulary must equal light vocabulary').toEqual(propsIn(light));
-  });
-
-  it('semantic color vocabulary is single across modes', () => {
-    for (const t of ['--accent', '--accent-ink', '--accent-soft', '--ok', '--warn', '--danger', '--local-accent', '--cloud-accent']) {
-      expect(css, `semantic token ${t} required`).toContain(`${t}:`);
-    }
+  it('dark vocabulary equals light vocabulary (modes are token sets only)', () => {
+    for (const b of dark) expect(propsIn(b), 'vocabulary must match across modes').toEqual(propsIn(light!));
   });
 
   it('no raw hex colors outside palette blocks', () => {
     const hits = stripPaletteBlocks(css).match(/#[0-9a-fA-F]{3,8}\b/g) ?? [];
     expect(hits, `raw hex outside :root palette blocks: ${hits.join(', ')}`).toEqual([]);
   });
+});
 
-  it('live-probe tokens exist: --sans, --mono, --gap, --radius, --radius-sm', () => {
-    for (const t of ['--sans', '--mono', '--gap', '--radius', '--radius-sm']) {
-      expect(css, `${t} must be defined (design-lane live probe reads computed values)`).toContain(`${t}:`);
-    }
+describe('token contract', () => {
+  const tokens = [
+    '--bg-page', '--bg-soft', '--bg-inset', '--border-subtle', '--border-control',
+    '--text-primary', '--text-body', '--text-nav', '--text-secondary',
+    '--brand', '--brand-hover', '--brand-tint', '--brand-text', '--on-brand',
+    '--danger-bg', '--danger-text', '--danger-border',
+    '--success-bg', '--success-text', '--warning-bg', '--warning-text', '--neutral-bg',
+    '--font-sans', '--font-mono', '--focus', '--ring',
+    '--radius', '--radius-sm', '--radius-pill',
+  ];
+  it.each(tokens)('%s is defined', (token: string) => {
+    expect(css, `token ${token} must be defined`).toContain(`${token}:`);
+  });
+});
+
+describe('self-hosted fonts (no external URLs, ever)', () => {
+  const files = [
+    'source-sans-3-latin-400-normal.woff2',
+    'source-sans-3-latin-600-normal.woff2',
+    'source-sans-3-latin-700-normal.woff2',
+    'source-code-pro-latin-400-normal.woff2',
+    'source-code-pro-latin-500-normal.woff2',
+  ];
+  it.each(files)('css loads /fonts/%s', (file: string) => {
+    expect(css, `must reference /fonts/${file}`).toContain(`url(/fonts/${file})`);
   });
 
-  it('scale tokens exist (type, spacing, motion, elevation)', () => {
-    for (const t of ['--f-2xs', '--f-xs', '--f-sm', '--f-base', '--f-md', '--f-lg', '--f-xl', '--f-stat',
-                     '--sp-1', '--sp-2', '--sp-3', '--sp-4', '--sp-5', '--sp-6',
-                     '--t-fast', '--t-med', '--ease', '--shadow', '--shadow-lift', '--shadow-edge']) {
-      expect(css, `token ${t} must be defined`).toContain(`${t}:`);
+  it('five @font-face rules, all font-display: swap', () => {
+    expect((css.match(/@font-face\s*\{/g) ?? []).length).toBe(5);
+    expect((css.match(/font-display:\s*swap/g) ?? []).length).toBe(5);
+  });
+
+  it('no external font URLs in css or index.html (no Google Fonts, no @import)', () => {
+    expect(css).not.toMatch(/https?:/);
+    expect(css).not.toMatch(/@import/);
+    expect(css.match(/url\((?!["']?\/fonts\/)/g) ?? []).toEqual([]);
+    expect(html).not.toMatch(/fonts\.(googleapis|gstatic)/);
+    expect(html.match(/<link[^>]+href=["']https?:/g) ?? []).toEqual([]);
+  });
+
+  it('token font stacks name the self-hosted families', () => {
+    expect(css).toMatch(/--font-sans:\s*'Source Sans 3'/);
+    expect(css).toMatch(/--font-mono:\s*'Source Code Pro'/);
+  });
+});
+
+describe('accessibility law', () => {
+  it('visible focus ring is 2px solid the brand color', () => {
+    expect(css).toMatch(/--focus:\s*2px solid var\(--brand\)/);
+    expect(css).toMatch(/:focus-visible\s*\{[^}]*outline:\s*var\(--focus\)/);
+  });
+
+  it('supports prefers-reduced-motion and :focus-visible', () => {
+    expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
+    expect(css).toMatch(/:focus-visible/);
+  });
+
+  it('index.html keeps labels/roles: nav landmark, labeled switcher/search, aria-live toasts', () => {
+    expect(html).toMatch(/<nav class="sidebar" aria-label="Primary navigation">/);
+    expect(html).toMatch(/<select id="ventureSwitch" class="venture-switcher" aria-label="Switch venture">/);
+    expect(html).toMatch(/class="search-input" placeholder="Search" aria-label=/);
+    expect(html).toMatch(/id="toasts" role="status" aria-live="polite"/);
+  });
+});
+
+describe('shell law (top bar + sidebar nav, replacing the old tab bar)', () => {
+  it('exactly four nav links: Requests, Rules, Documents, Settings', () => {
+    expect((html.match(/class="nav-link"/g) ?? []).length).toBe(4);
+    for (const p of ['requests', 'rules', 'documents', 'settings']) {
+      expect(html, `nav item ${p} required`).toMatch(new RegExp(`data-page="${p}">[^<]+</button>`));
+    }
+    expect(html).toMatch(/data-page="requests">Requests<\/button>/);
+    expect(html).toMatch(/data-page="rules">Rules<\/button>/);
+    expect(html).toMatch(/data-page="documents">Documents<\/button>/);
+    expect(html).toMatch(/data-page="settings">Settings<\/button>/);
+  });
+
+  it('old tab bar is gone (no role="tablist", no .tabs/.tab chrome)', () => {
+    expect(html).not.toMatch(/role="tablist"/);
+    expect(html).not.toMatch(/class="tabs"/);
+  });
+
+  it('top bar has wordmark, venture switcher, search field, theme toggle', () => {
+    expect(html).toMatch(/class="wordmark"[\s\S]*Cross-Venture/);
+    expect(html).toMatch(/id="ventureSwitch"/);
+    expect(html).toMatch(/class="search-input"/);
+    expect(html).toMatch(/id="themeToggle"/);
+  });
+
+  it('nav selection = brand tint + brand text (Stripe selected-item anatomy)', () => {
+    const sel = css.match(/\.nav-link\.is-selected\s*\{[^}]*\}/);
+    expect(sel, '.nav-link.is-selected rule required').toBeTruthy();
+    expect(sel![0]).toMatch(/background:\s*var\(--brand-tint\)/);
+    expect(sel![0]).toMatch(/color:\s*var\(--brand-text\)/);
+    const nav = css.match(/\.nav-link\s*\{[^}]*\}/);
+    expect(nav![0]).toMatch(/color:\s*var\(--text-nav\)/);
+  });
+
+  it('legacy tab ids map onto the new pages (goTab keeps working)', () => {
+    expect(mainTs).toContain("ingest: 'documents'");
+    expect(mainTs).toContain("simulator: 'requests'");
+    expect(mainTs).toContain("inspector: 'settings'");
+    expect(mainTs).toContain("sync: 'settings'");
+    expect(mainTs).toMatch(/registerTabSetter\(setTab\)/);
+    expect(stateTs).toMatch(/export function registerTabSetter/);
+    expect(stateTs).toMatch(/export function goTab/);
+  });
+
+  it('pages mount every former screen under the new nav', () => {
+    for (const rootId of ['root-simulator', 'root-rules', 'root-ingest', 'root-sync', 'root-inspector']) {
+      expect(html, `mount point #${rootId} required`).toContain(`id="${rootId}"`);
     }
   });
 });
 
-describe('layout law (comp-committed rules)', () => {
-  it('pipeline ledger is a fixed 5-col grid (never card-in-card)', () => {
-    expect(css).toMatch(/grid-template-columns:\s*36px\s+1fr\s+140px\s+90px\s*72px/);
+describe('component anatomy (cv-stripe mock, verbatim measures)', () => {
+  it('page title 24px/700; section titles 16px/700 with a 1px divider', () => {
+    const title = css.match(/\.page-title\s*\{[^}]*\}/);
+    expect(title, '.page-title rule required').toBeTruthy();
+    expect(title![0]).toMatch(/font-size:\s*var\(--f-xl\)/);
+    expect(title![0]).toMatch(/font-weight:\s*700/);
+    const sec = css.match(/\.section-title\s*\{[^}]*\}/);
+    expect(sec![0]).toMatch(/font-size:\s*var\(--f-lg\)/);
+    expect(sec![0]).toMatch(/font-weight:\s*700/);
+    expect(sec![0]).toMatch(/border-bottom:\s*1px solid var\(--border-subtle\)/);
   });
-  it('PRIVACY BOUNDARY signature band: 2px border-strong top AND bottom', () => {
-    const band = css.match(/\.boundary-band\s*\{[^}]*\}/);
-    expect(band, '.boundary-band rule required').toBeTruthy();
-    expect(band![0]).toMatch(/border-top:\s*2px solid var\(--border-strong\)/);
-    expect(band![0]).toMatch(/border-bottom:\s*2px solid var\(--border-strong\)/);
+
+  it('sections stack with dividers — the page has no boxed .card', () => {
+    expect(css).toMatch(/\.section\s*\{[^}]*margin-bottom:/);
+    expect(css).not.toMatch(/\.card\s*\{/);
   });
-  it('inspector mapping table marks raw PII strikes, cloud tokens and verbatim rows', () => {
+
+  it('buttons: 28px tall, 6px radius; primary is the brand fill; secondary is white + control border', () => {
+    const btn = css.match(/\.btn\s*\{[^}]*\}/);
+    expect(btn, '.btn rule required').toBeTruthy();
+    expect(btn![0]).toMatch(/height:\s*28px/);
+    expect(btn![0]).toMatch(/border-radius:\s*var\(--radius\)/);
+    const primary = css.match(/\.btn-primary\s*\{[^}]*\}/);
+    expect(primary![0]).toMatch(/background:\s*var\(--brand\)/);
+    const secondary = css.match(/\.btn-secondary\s*\{[^}]*\}/);
+    expect(secondary![0]).toMatch(/border:\s*1px solid var\(--border-control\)/);
+  });
+
+  it('badges are small 4px-radius chips with the semantic pairs', () => {
+    const badge = css.match(/\.badge\s*\{[^}]*\}/);
+    expect(badge, '.badge rule required').toBeTruthy();
+    expect(badge![0]).toMatch(/height:\s*20px/);
+    expect(badge![0]).toMatch(/border-radius:\s*var\(--radius-sm\)/);
+    const danger = css.match(/\.badge--breach\s*\{[^}]*\}/);
+    expect(danger![0]).toMatch(/background:\s*var\(--danger-bg\)/);
+    expect(danger![0]).toMatch(/color:\s*var\(--danger-text\)/);
+    const ok = css.match(/\.badge--approved\s*\{[^}]*\}/);
+    expect(ok![0]).toMatch(/background:\s*var\(--success-bg\)/);
+    const warn = css.match(/\.badge--signoff\s*\{[^}]*\}/);
+    expect(warn![0]).toMatch(/background:\s*var\(--warning-bg\)/);
+  });
+
+  it('tables: 12px uppercase secondary headers + tabular numerals', () => {
+    const table = css.match(/table\.data-table[^{]*\{|\.data-table\s*\{[^}]*\}/);
+    expect(table, '.data-table rule required').toBeTruthy();
+    const th = css.match(/\.data-table th[^{]*\{[^}]*\}/g) ?? [];
+    expect(th.length, 'th rules required').toBeGreaterThan(0);
+    expect(th.join('\n')).toMatch(/text-transform:\s*uppercase/);
+    expect(th.join('\n')).toMatch(/color:\s*var\(--text-secondary\)/);
+    expect(th.join('\n')).toMatch(/font-size:\s*var\(--f-2xs\)/);
+    expect(css).toMatch(/font-variant-numeric:\s*tabular-nums/);
+  });
+
+  it('pipeline ledger stays a fixed 5-col grid', () => {
+    expect(css).toMatch(/grid-template-columns:\s*40px\s+1fr\s+150px\s+120px\s+72px/);
+  });
+
+  it('cloud-bound stage tag wears the brand color; local tags stay neutral (trust legend)', () => {
+    const cloud = css.match(/\.engine-tag--cloud\s*\{[^}]*\}/);
+    expect(cloud, '.engine-tag--cloud rule required').toBeTruthy();
+    expect(cloud![0]).toMatch(/color:\s*var\(--brand-text\)/);
+  });
+
+  it('inspector mapping marks raw PII strikes and the cloud side', () => {
     const tok = css.match(/\.token-table td\.tok\s*\{[^}]*\}/);
     expect(tok, 'td.tok rule required').toBeTruthy();
-    expect(tok![0]).toMatch(/color:\s*var\(--cloud-accent\)/);
+    expect(tok![0]).toMatch(/color:\s*var\(--brand-text\)/);
     const st = css.match(/\.token-table td\.strike\s*\{[^}]*\}/);
     expect(st, 'td.strike rule required (raw PII proof)').toBeTruthy();
     expect(st![0]).toMatch(/text-decoration:\s*line-through/);
-    expect(st![0]).toMatch(/color:\s*var\(--danger\)/);
-  });
-  it('event log strip exists (ops-tool proof)', () => {
-    expect(css).toMatch(/\.evlog[^{]*\{/);
-  });
-  it('cloud-bound stage tag uses the cloud color, never the local color (trust legend)', () => {
-    const cloud = css.match(/\.engine-tag--cloud\s*\{[^}]*\}/);
-    expect(cloud, '.engine-tag--cloud rule required').toBeTruthy();
-    expect(cloud![0]).toMatch(/color:\s*var\(--cloud-accent\)/);
-    expect(cloud![0], 'cloud tag must not reference local-accent').not.toMatch(/local-accent/);
+    expect(st![0]).toMatch(/color:\s*var\(--danger-text\)/);
+    const payload = css.match(/pre\.payload--cloud\s*\{[^}]*\}/);
+    expect(payload, 'payload--cloud rule required').toBeTruthy();
+    expect(payload![0]).toMatch(/border-color:\s*var\(--brand\)/);
   });
 });
 
-describe('theme mechanism (owner pick)', () => {
+describe('theme mechanism (owner pick, unchanged)', () => {
   it('index.html defines the toggle control and anti-FOUC boot', () => {
     expect(html).toMatch(/id="themeToggle"/);
+    expect(html).toMatch(/id="themeMode"/);
     expect(html).toMatch(/cv-theme/); // localStorage key applied before first paint
     expect(html).toMatch(/data-theme/);
   });
@@ -121,74 +266,54 @@ describe('theme mechanism (owner pick)', () => {
   });
 });
 
-describe('designcheck law (mirrors fleet designcheck.py MUST rules)', () => {
-  it('comments are well-formed (no mid-text /*-style early close)', () => {
+describe('hygiene (mirrors fleet designcheck MUST rules)', () => {
+  it('comments are well-formed (no mid-text comment-style early close)', () => {
     const stripped = css.replace(/\/\*[\s\S]*?\*\//g, '');
     const stray = stripped.match(/\/\*|\*\//g) ?? [];
     expect(stray, `stray comment delimiters (a "--x-*/" closes a comment early): ${stray.join(' ')}`).toEqual([]);
   });
-  it('spacing literals stay on the 4/8/12/16/24/32/48 scale', () => {
-    const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
-    const bad: string[] = [];
-    for (const m of code.matchAll(/(?:margin|padding|gap|row-gap|column-gap)\s*:\s*([^;{}]+)/g)) {
-      const scale = new Set([0, 4, 8, 12, 16, 24, 32, 48]);
-      for (const px of m[1].matchAll(/(\d+(?:\.\d+)?)px/g)) {
-        if (!scale.has(parseInt(px[1], 10)) || px[1] !== String(parseInt(px[1], 10))) bad.push(m[1]);
-      }
-    }
-    expect(bad, `off-scale spacing: ${bad.join(' | ')}`).toEqual([]);
-  });
-  it('radius literals stay in {0,4,8,12,999}', () => {
-    const code = css.replace(/\/\*[\s\S]*?\*\//g, '');
-    const scale = new Set([0, 4, 8, 12, 999]);
-    const bad: string[] = [];
-    for (const m of code.matchAll(/border-radius\s*:\s*([^;{}]+)/g)) {
-      for (const px of m[1].matchAll(/(\d+(?:\.\d+)?)px/g)) {
-        if (!scale.has(parseInt(px[1], 10))) bad.push(m[1]);
-      }
-    }
-    expect(bad, `off-scale radius: ${bad.join(' | ')}`).toEqual([]);
-  });
   it('no transition:all, no brightness() hover', () => {
     expect(css).not.toMatch(/transition\s*:\s*all\b/);
     expect(css).not.toMatch(/filter\s*:\s*brightness/);
-  });
-  it('supports prefers-reduced-motion and :focus-visible', () => {
-    expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)/);
-    expect(css).toMatch(/:focus-visible/);
   });
   it('every font-size declaration uses a token', () => {
     const rest = stripPaletteBlocks(css);
     const literals = (rest.match(/font-size:\s*[^;]+;/g) ?? []).filter((d) => !d.includes('var('));
     expect(literals, `font-size must use var(--f-*): ${literals.join(' | ')}`).toEqual([]);
   });
+  it('every border-radius uses a token (no raw px)', () => {
+    const off = (css.match(/border-radius\s*:\s*[^;{}]+;/g) ?? []).filter((d) => /\d+(\.\d+)?px/.test(d));
+    expect(off, `border-radius must use var(--radius*): ${off.join(' | ')}`).toEqual([]);
+  });
 });
 
 describe('class-hook contract', () => {
-  // Inventory 2026-11-24 (restyle): every class rendered by ui/*.ts or index.html.
+  // Inventory 2026-11-24 (Stripe restyle): every class rendered by ui/*.ts or index.html.
   const required = [
-    'badge', 'badge--approved', 'badge--signoff', 'badge--breach',
-    'banner', 'banner--fail', 'banner--info', 'banner--muted', 'banner--pass', 'banner--offline',
-    'boot-error', 'boundary-band', 'brand', 'brand-mark', 'brand-sub', 'brand-text',
-    'btn', 'btn-primary', 'btn-run', 'btn-sm', 'card', 'card-head', 'card-toolbar',
-    'chip', 'chip--muted', 'chip--ok', 'chip--warn', 'chips', 'cite', 'cite-excerpt',
+    'badge', 'badge--approved', 'badge--breach', 'badge--signoff',
+    'banner', 'banner--fail', 'banner--info', 'banner--muted', 'banner--offline', 'banner--pass',
+    'boot-error', 'boundary-band', 'btn', 'btn-primary', 'btn-row', 'btn-secondary',
+    'chip', 'chip--muted', 'chip--ok', 'chip--warn', 'cite', 'cite-excerpt',
     'cite-note', 'cite-src', 'code', 'col-head', 'col-head--cloud', 'col-head--local',
-    'cta-row', 'dot', 'draft', 'dur',    'draft-head', 'empty', 'engine-tag', 'engine-tag--cloud', 'evlog',
-    'evlog-head', 'evmsg', 'evrow', 'evtime', 'field', 'field-row', 'grid-2',
-    'hero-head', 'hero-sub', 'hint', 'insp-cols', 'k', 'ledger', 'lidx',
-    'llabel', 'lnote', 'lrow', 'lrow--active', 'lrow--done', 'lrow--err',
-    'lrow--queued', 'lrow--skip', 'metric', 'model-chip', 'note', 'note--err',
-    'note--ok', 'note--warn', 'panel', 'pairing', 'payload', 'payload--cloud',
-    'payload-block', 'ph', 'query-chip', 'rail', 'rail-step', 'rail-step--active',
-    'rail-step--done', 'rule-strip', 'rule-tile', 'skip-link', 'stat', 'stat-k', 'stat-v',
-    'stats', 'strike', 'summary-head', 'tab', 'tabs', 'tag', 'theme-toggle', 'tok',
-    'token-table', 'toast', 'toast--error', 'toast--in', 'toast--ok', 'toast--out',
-    'toast--warn', 'toasts', 'topbar', 'topbar-in', 'v', 'val', 'verdict',
-    'verdict-head', 'verdict-sub', 'vrow', 'wrap', 'ws-summary',
+    'cta-row', 'data-table', 'draft', 'draft-head', 'dur', 'empty', 'empty-sub',
+    'empty-title', 'engine-tag', 'engine-tag--cloud', 'evlog', 'evlog-head', 'evmsg',
+    'evrow', 'evrow--err', 'evrow--ok', 'evtime', 'field', 'field-row', 'grid-2',
+    'hint', 'insp-cols', 'is-selected', 'k', 'ledger', 'lidx', 'llabel', 'lnote',
+    'lrow', 'lrow--active', 'lrow--done', 'lrow--err', 'lrow--queued', 'lrow--skip',
+    'metric', 'model-chip', 'nav-link', 'nav-list', 'note', 'note--err', 'note--ok',
+    'note--warn', 'page', 'page-header', 'page-sub', 'page-title', 'pairing',
+    'payload', 'payload--cloud', 'payload-block', 'ph', 'query-chip', 'rule-strip',
+    'rule-tile', 'search-box', 'search-input', 'section', 'section-head', 'section-title',
+    'shell', 'sidebar', 'skip-link', 'stat', 'stat-k', 'stat-v', 'stats', 'strike',
+    'summary-head', 'tag', 'theme-toggle', 'tok', 'token-table', 'toast',
+    'toast--error', 'toast--in', 'toast--ok', 'toast--out', 'toast--warn', 'toasts',
+    'topbar', 'topbar-brand', 'topbar-divider', 'topbar-left', 'topbar-main',
+    'topbar-right', 'v', 'val', 'venture-switcher', 'verdict', 'verdict-head',
+    'verdict-sub', 'vrow', 'wordmark', 'wordmark-dot', 'workspace', 'ws-summary',
   ];
   it.each(required)('.%s has a rule in styles.css', (cls: string) => {
     // Selector-position match with an identifier boundary: a renamed class
-    // (.hero-head -> .hero-head-bogus) must NOT satisfy the hook for .hero-head.
+    // (.section-title -> .section-title-bogus) must NOT satisfy the hook.
     const re = new RegExp(`\\.${cls}(?![\\w-])`);
     expect(css, `missing selector for .${cls}`).toMatch(re);
   });

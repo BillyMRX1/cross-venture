@@ -1,11 +1,11 @@
-// WS-4 Ingest tab: file upload / paste / sample seed → chunker → anonymizer
-// → blinded cloud graph synthesis → local save. Stages degrade with visible
-// messages when upstream modules throw (expected while stubs are in place).
-// Restyle 2026-11-24 (owner pick BOTH modes): the pipeline renders as the
-// Screen-2 ledger with the PRIVACY BOUNDARY signature band, an event log,
-// measured durations and engine tags. Pipeline logic is untouched; tags are
-// honest (no NER claim unless on-device NER is actually available, model
-// names only ever come from usedModels).
+// WS-4 Ingest (Documents page): file upload / paste / sample seed → chunker →
+// anonymizer → blinded cloud graph synthesis → local save. Stages degrade with
+// visible messages when upstream modules throw (expected while stubs are in
+// place). Restyle 2026-11-24 (Stripe Dashboard shell): the pipeline renders as
+// the ledger with the PRIVACY BOUNDARY band, an event log, measured durations
+// and engine tags. Pipeline logic is untouched; tags are honest (no NER claim
+// unless on-device NER is actually available, model names only ever come from
+// usedModels).
 import { PayloadBlockedError, synthesizeGraph } from '../cloud/graphExtractor';
 import { onDeviceStatus } from '../hybrid';
 import { anonymizeChunks } from '../ingest/anonymizer';
@@ -13,15 +13,14 @@ import { chunkDocument } from '../ingest/chunker';
 import { extractTextFromFile } from '../ingest/textextract';
 import { saveWorkspaceLocal } from '../storage/db';
 import type { AnonymizeResult, DocChunk, KnowledgeGraph, PayloadLogEntry, Workspace } from '../types';
-import { resetRail, setRail } from './rail';
 import { store } from './state';
 import { el, errText, newId, toast } from './util';
 import { isSpaFallback } from '../ingest/spaFallback';
 
 /**
- * Sample docs (TD-6). Each entry lists candidate paths under /sample-docs/:
- * the canonical names from the task spec first, then the A1/A2/A3/B1 variants
- * actually shipped by WS-1, so the seed button works against either layout.
+ * Sample docs. Each entry lists candidate paths under /sample-docs/:
+ * the canonical names first, then the A1/A2/A3/B1 variants that actually
+ * shipped, so the seed button works against either layout.
  */
 const SAMPLE_DOCS: Array<{ title: string; paths: string[] }> = [
   { title: 'Atelier Emily partnership agreement', paths: ['atelier-emily-partnership-agreement.md', 'A1-atelier-emily-partnership-agreement.md'] },
@@ -64,14 +63,6 @@ export function mountIngest(root: HTMLElement): void {
   let running = false;
   const rowEls = new Map<StageId, { row: HTMLDivElement; note: HTMLElement; metric: HTMLElement; dur: HTMLElement }>();
   const stageStartedAt = new Map<StageId, number>();
-
-  // Hero framing for the demo's first screen (CEO UI/UX polish 2026-11-23).
-  const hero = el(
-    'div',
-    {},
-    el('h2', { class: 'hero-head' }, 'Build your deal workspace'),
-    el('p', { class: 'hero-sub' }, 'Drop in contracts, notes and cost sheets. Five stages run on this device first; only blinded tokens ever reach the cloud stage, and the model that answered is always shown.'),
-  );
 
   // Result-summary elements declared before resetStages so no forward reference.
   const modelChip = el('span', { class: 'model-chip', 'aria-live': 'polite' });
@@ -150,7 +141,6 @@ export function mountIngest(root: HTMLElement): void {
     modelChip.textContent = '';
     wsStats.replaceChildren();
     wsSummary.hidden = true;
-    resetRail();
   }
 
   // Honest engine tag for stage 3: NER only when the on-device model is up.
@@ -176,7 +166,6 @@ export function mountIngest(root: HTMLElement): void {
     }
     running = true;
     resetStages();
-    setRail(1, 'active');
     try {
       // Stage 1 — extract
       setStage('extract', 'run');
@@ -198,8 +187,6 @@ export function mountIngest(root: HTMLElement): void {
       }
       const chars = texts.reduce((a, t) => a + t.text.length, 0);
       setStage('extract', 'ok', `${texts.length} document(s) · ${chars.toLocaleString()} chars`, `${chars.toLocaleString()} ch`);
-      setRail(1, 'done');
-      setRail(2, 'active');
 
       // Stage 2 — chunk
       setStage('chunk', 'run');
@@ -243,8 +230,6 @@ export function mountIngest(root: HTMLElement): void {
           ? `${errText(e)} — workspace kept WITHOUT the cloud graph`
           : `${errText(e)} — workspace kept WITHOUT the cloud graph (${log.length} attempted payload(s) recorded)`);
       }
-      setRail(2, 'done');
-      setRail(3, 'active');
 
       const ws: Workspace = {
         id: newId(),
@@ -265,9 +250,7 @@ export function mountIngest(root: HTMLElement): void {
         setStage('save', 'skip', `Not persisted: ${errText(e)}`, '—');
       }
 
-      // Rail step 3 is GRAPH: only lit when a cloud graph actually landed.
       const graphCount = graph.ventures.length + graph.products.length + graph.dealRules.length;
-      if (graphCount > 0) setRail(3, 'done');
 
       // Result summary: numbers the pipeline already proved on screen.
       wsStats.replaceChildren(
@@ -282,7 +265,7 @@ export function mountIngest(root: HTMLElement): void {
       const full = graph.ventures.length > 0;
       toast(
         full
-          ? `Workspace ready — open Privacy Inspector to see the exact cloud payload`
+          ? `Workspace ready — open Settings → Privacy to see the exact cloud payload`
           : 'Partial workspace (no cloud graph yet) — check the stage errors and re-run',
         full ? 'ok' : 'warn',
       );
@@ -373,7 +356,7 @@ export function mountIngest(root: HTMLElement): void {
         setStatus('note--warn', `Sample fetch problems: ${missing.join(' · ')}`);
       }
       if (sources.length === 0) {
-        setStatus('note--err', 'No sample docs available. Serve them from web/public/sample-docs/ (WS-1) or upload files instead.');
+        setStatus('note--err', 'No sample docs available — upload your own files instead.');
         sampleBtn.disabled = false;
         return;
       }
@@ -391,16 +374,16 @@ export function mountIngest(root: HTMLElement): void {
 
   const filesCard = el(
     'div',
-    { class: 'card' },
-    el('h2', {}, 'Upload files'),
-    el('p', {}, 'Contracts, meeting notes, cost sheets — .txt, .md or text-layer .pdf (TD-3). Extraction is fully local.'),
+    { class: 'section' },
+    el('h2', { class: 'section-title' }, 'Upload files'),
+    el('p', {}, 'Upload contracts, meeting notes or cost sheets (.txt, .md, text PDFs). Files are read on this device.'),
     el('div', { class: 'field' }, el('label', { for: 'fileInput' }, 'Documents'), fileInput),
   );
 
   const pasteCard = el(
     'div',
-    { class: 'card' },
-    el('h2', {}, 'Paste text'),
+    { class: 'section' },
+    el('h2', { class: 'section-title' }, 'Paste text'),
     el('p', {}, 'Paste any agreement or note; it joins the same pipeline.'),
     el('div', { class: 'field' }, el('label', { for: 'pasteText' }, 'Text'), pasteArea),
     el('div', { class: 'field' }, el('label', { for: 'pasteName' }, 'Document name'), pasteName),
@@ -409,25 +392,24 @@ export function mountIngest(root: HTMLElement): void {
 
   const sampleCard = el(
     'div',
-    { class: 'card' },
-    el('h2', {}, 'Sample workspace (TD-6)'),
-    el('p', {}, 'Scenario A “Atelier Emily” (co-owned, capped discounts) + Scenario B “Nomad Studio” (solo). Fetches the four sample docs from /sample-docs/.'),
+    { class: 'section' },
+    el('h2', { class: 'section-title' }, 'Sample workspace'),
+    el('p', {}, 'Two demo ventures — one co-owned with capped discounts, one solo. Nothing is uploaded; everything is read on this device.'),
     sampleBtn,
   );
 
   const progressCard = el(
     'div',
-    { class: 'card' },
-    el('div', { class: 'card-head' }, el('h2', {}, 'Pipeline Runner'), modelChip),
-    el('p', { class: 'hero-sub' }, 'Local stages run first; only blinded tokens cross the boundary to the cloud stage. Errors degrade visibly instead of crashing.'),
+    { class: 'section' },
+    el('div', { class: 'section-head' }, el('h2', { class: 'section-title' }, 'Pipeline Runner'), modelChip),
+    el('p', {}, 'Local stages run first; only blinded tokens cross the boundary to the cloud stage. Errors degrade visibly instead of crashing.'),
     ledger,
     evlog,
     wsSummary,
-    el('div', { class: 'card-toolbar' }, statusLine),
+    statusLine,
   );
 
   root.replaceChildren(
-    hero,
     el('div', { class: 'grid-2' }, filesCard, pasteCard),
     sampleCard,
     progressCard,
