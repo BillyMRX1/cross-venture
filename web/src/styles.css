@@ -376,6 +376,34 @@ pre {
   cursor: default;
 }
 
+.venture-label {
+  font-size: var(--f-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.venture-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-6);
+  background: var(--brand-tint);
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: var(--f-sm);
+  color: var(--text-body);
+}
+
+.venture-hint[hidden] {
+  display: none;
+}
+
+.venture-hint-dismiss {
+  font-size: var(--f-sm);
+  white-space: nowrap;
+}
+
 .topbar-divider {
   width: 1px;
   height: 18px;
@@ -722,6 +750,17 @@ pre {
   background: var(--brand-hover);
   border-color: var(--brand-hover);
   color: var(--on-brand);
+}
+
+.btn-danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+.btn-danger:hover:not(:disabled) {
+  border-color: var(--danger-text);
+  color: var(--danger-text);
 }
 
 .btn-row {
@@ -1849,6 +1888,126 @@ input.is-invalid {
 
 .toast--error {
   border-left-color: var(--danger-text);
+}
+
+/* ---------- data management + grouped documents + confirm modal ---------- */
+.data-actions {
+  display: flex;
+  flex-direction: column;
+  margin-top: var(--sp-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.data-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-4);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-wrap: wrap;
+}
+
+.data-row-copy {
+  min-width: 0;
+  flex: 1 1 280px;
+}
+
+.data-row-copy strong {
+  display: block;
+  font-size: var(--f-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.data-row-copy p {
+  margin: var(--sp-1) 0 0;
+}
+
+.doc-group {
+  margin-bottom: var(--sp-4);
+}
+
+.doc-group:last-child {
+  margin-bottom: 0;
+}
+
+.doc-group-title {
+  font-size: var(--f-base);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 var(--sp-2);
+}
+
+.doc-actions-cell {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-4);
+  background: rgba(16, 17, 24, 0.48);
+}
+
+.modal-dialog {
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg-page);
+  color: var(--text-body);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-pop);
+  padding: var(--sp-5);
+}
+
+.modal-title {
+  font-size: var(--f-lg);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 var(--sp-2);
+}
+
+.modal-body {
+  font-size: var(--f-base);
+  color: var(--text-body);
+}
+
+.modal-list {
+  margin: var(--sp-2) 0 var(--sp-3);
+  padding-left: var(--sp-4);
+  font-size: var(--f-sm);
+  color: var(--text-body);
+}
+
+.modal-list li {
+  margin-bottom: var(--sp-1);
+}
+
+.modal-sync-note {
+  margin-top: var(--sp-3);
+  padding: var(--sp-3);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-soft);
+  font-size: var(--f-sm);
+  color: var(--text-body);
+}
+
+.modal-sync-note p {
+  margin: 0 0 var(--sp-2);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-top: var(--sp-4);
 }
 
 /* ---------- boot error ---------- */

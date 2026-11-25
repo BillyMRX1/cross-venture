@@ -6,7 +6,8 @@
 import { evaluateDeal } from '../calc/marginEngine';
 import { buildDrafts } from '../drafts/whatsapp';
 import type { Badge, DealInput, DealRuleNode, Drafts, Verdict, Workspace } from '../types';
-import { lsGet, lsSet } from './state';
+import { cleanSkuLabel } from './productPicker';
+import { lsGet, lsRemove, lsSet } from './state';
 import { hydrate, parseNum } from './util';
 
 /* ---------- the record ---------- */
@@ -61,6 +62,34 @@ export function saveRequests(records: RequestRecord[]): void {
   lsSet(RECORDS_KEY, JSON.stringify(records));
 }
 
+export function clearAllRequests(): void {
+  lsRemove(RECORDS_KEY);
+}
+
+export function removeRequestsForVenture(ventureId: string): number {
+  const existing = loadRequests();
+  const kept = existing.filter((r) => r.ventureId !== ventureId);
+  const removed = existing.length - kept.length;
+  if (removed > 0) saveRequests(kept);
+  return removed;
+}
+
+export function remapRequestVentureIds(ventureIdMap: Record<string, string>): boolean {
+  if (Object.keys(ventureIdMap).length === 0) return false;
+  const existing = loadRequests();
+  let changed = false;
+  const updated = existing.map((r) => {
+    const mapped = ventureIdMap[r.ventureId];
+    if (mapped && mapped !== r.ventureId) {
+      changed = true;
+      return { ...r, ventureId: mapped };
+    }
+    return r;
+  });
+  if (changed) saveRequests(updated);
+  return changed;
+}
+
 export function nextRequestId(records: RequestRecord[]): string {
   let max = 0;
   for (const r of records) {
@@ -99,8 +128,7 @@ export function ventureNameOf(ws: Workspace, ventureId: string): string {
 }
 
 export function skuNameOf(ws: Workspace, skuId: string): string {
-  const p = ws.graph.products.find((x) => x.sku_id === skuId) ?? null;
-  return p ? hydrate(ws.tokenMap, p.sku_token) || p.sku_id : '';
+  return cleanSkuLabel(ws, skuId);
 }
 
 /**

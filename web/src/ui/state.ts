@@ -64,6 +64,31 @@ export function lsSet(key: string, value: string): void {
   }
 }
 
+export function lsRemove(key: string): void {
+  try {
+    window.localStorage.removeItem(key);
+  } catch {
+    /* private mode / storage unavailable */
+  }
+}
+
+/* ---------- phone-sync presence flag (local indicator only) ---------- */
+
+const SYNCED_COPY_KEY = 'cv.syncedCopy';
+
+/** True when this device has pushed/pulled an encrypted phone-sync copy or holds an active vault key. */
+export function hasSyncedCopy(): boolean {
+  return Boolean(vaultKeyString || lsGet(SYNCED_COPY_KEY));
+}
+
+export function markSyncedCopy(wsId: string): void {
+  lsSet(SYNCED_COPY_KEY, wsId);
+}
+
+export function clearSyncedCopyFlag(): void {
+  lsRemove(SYNCED_COPY_KEY);
+}
+
 /* ---------- tab navigation (registered by main.ts, used by empty states) ---------- */
 
 let tabSetter: ((tab: string) => void) | null = null;
@@ -74,6 +99,17 @@ export function registerTabSetter(fn: (tab: string) => void): void {
 
 export function goTab(tab: string): void {
   if (tabSetter) tabSetter(tab);
+}
+
+/** Open Settings scrolled to the existing Phone sync section. */
+export function goSync(): void {
+  goTab('settings');
+  if (typeof document !== 'undefined') {
+    const syncRoot = document.getElementById('root-sync');
+    if (syncRoot && typeof syncRoot.scrollIntoView === 'function') {
+      syncRoot.scrollIntoView({ block: 'start' });
+    }
+  }
 }
 
 /* ---------- rule focus (registered by rules.ts, used by the request record) ---------- */
