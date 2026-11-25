@@ -39,6 +39,14 @@ function chunkB(): AnonymizedChunk {
   };
 }
 
+// Pad a document past the batching cap (MAX_COMBINED_CHUNK_CHARS) so it keeps
+// its own cloud call: these tests pin PER-GROUP gate and record-before-send
+// behaviour. Batching itself is covered by graphExtractor.batch.test.ts.
+// The filler deliberately contains no known value and no digit.
+function oversized(chunk: AnonymizedChunk): AnonymizedChunk {
+  return { ...chunk, text: `${chunk.text} ${'terms of the supply agreement, reviewed locally. '.repeat(400)}` };
+}
+
 describe('pre-send privacy gate + record-before-send (CV-SEC-2)', () => {
   it('blocks the call and never reaches the model when a known value appears in the prompt', async () => {
     generateMock.mockReset();
@@ -83,7 +91,7 @@ describe('pre-send privacy gate + record-before-send (CV-SEC-2)', () => {
       .mockResolvedValueOnce(okResponse)
       .mockResolvedValueOnce({ text: 'not json at all', usedOnDevice: false, model: 'test' });
     const seen: PayloadLogEntry[] = [];
-    await expect(synthesizeGraph([chunkA(), chunkB()], '', (e) => seen.push(e))).rejects.toThrow();
+    await expect(synthesizeGraph([chunkA(), oversized(chunkB())], '', (e) => seen.push(e))).rejects.toThrow();
     expect(generateMock).toHaveBeenCalledTimes(2);
     const docNames = seen.map((e) => e.docName);
     expect(docNames).toContain('a-agreement.md');
@@ -111,7 +119,7 @@ describe('pre-send privacy gate + record-before-send (CV-SEC-2)', () => {
   it('blocks only the offending group: group 1 completes, group 2 never sends', async () => {
     generateMock.mockReset();
     generateMock.mockResolvedValue(okResponse);
-    const leaked: AnonymizedChunk = {
+    const leaked = oversized({
       docName: 'b-notes.md', page: 1, index: 0,
       // anonymizer regression: this value was detected but NOT blinded in the text
       text: '[VENTURE_1] met Sari Dewi to discuss.',
@@ -119,7 +127,7 @@ describe('pre-send privacy gate + record-before-send (CV-SEC-2)', () => {
         { text: 'Atelier Emily', token: '[VENTURE_1]', type: 'VENTURE' },
         { text: 'Sari Dewi', token: '[PARTNER_1]', type: 'PARTNER' },
       ],
-    };
+    });
     const seen: PayloadLogEntry[] = [];
     let caught: Error | null = null;
     try {
@@ -144,11 +152,11 @@ describe('pre-send privacy gate + record-before-send (CV-SEC-2)', () => {
       text: 'terms with [PARTNER_1]',
       detected: [{ text: 'Sari Dewi', token: '[PARTNER_1]', type: 'PARTNER' }],
     };
-    const second: AnonymizedChunk = {
+    const second = oversized({
       docName: 'b-notes.md', page: 1, index: 0,
       text: 'meeting with Emily Tan today.', // unblinded value for same token
       detected: [{ text: 'Emily Tan', token: '[PARTNER_1]', type: 'PARTNER' }],
-    };
+    });
     await expect(synthesizeGraph([first, second], '')).rejects.toBeInstanceOf(PayloadBlockedError);
     expect(generateMock).toHaveBeenCalledTimes(1);
   });

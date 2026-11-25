@@ -180,34 +180,66 @@ function rehydrateChunkText(text: string, detected: DetectedSpan[]): string {
   return out;
 }
 
-function buildPrompt(chunks: AnonymizedChunk[], tokenLegend: string, alias: string): string {
+function buildPrompt(
+  entries: Array<{ chunk: AnonymizedChunk; alias: string }>,
+  tokenLegend: string,
+): string {
   const instructions = [
-    'Extract a structured deal knowledge graph from the BLINDED document chunks below.',
+    'Extract a structured deal knowledge graph from the BLINDED document chunks below. They may come from several documents.',
     'All sensitive entities have been replaced with bracketed placeholder tokens such as [VENTURE_1], [PARTNER_1], [SKU_1], [COST_1], [PRICE_1], [DISCOUNT_CAP_1], [MARGIN_FLOOR_1].',
     'Treat tokens as opaque identifiers. Do NOT attempt to guess, infer, or reveal real-world identities or raw values.',
     'Preserve exact token strings in *_token fields and in verbatim_blinded_excerpt.',
     'Link partners, products, and dealRules to their parent venture via venture_id.',
-    'Documents are identified only by neutral aliases such as DOC_1. In source_doc_name, cite the exact alias shown in the chunk header (e.g. DOC_1).',
+    'Documents are identified only by neutral aliases such as DOC_1; every chunk header names its document alias. In source_doc_name, cite the exact alias shown in that chunk\'s header (e.g. DOC_2).',
   ].join('\n');
 
-  const body = chunks.map((c) => formatChunkLine(c, c.text, alias)).join('\n\n');
+  const body = entries.map((e) => formatChunkLine(e.chunk, e.chunk.text, e.alias)).join('\n\n');
   const legendBlock = tokenLegend.trim() ? `Token Legend:\n${tokenLegend.trim()}\n\n` : '';
   return `${instructions}\n\n${legendBlock}Blinded Chunks:\n${body}`;
 }
 
 /**
- * Synthesizes a KnowledgeGraph from already-blinded chunks via one cloud call per document group.
- * Records the exact outbound prompt in payloadLog alongside local-only rehydrated text.
- * CV-SEC-2 (2026-11-20): every prompt passes a fail-closed pre-send gate (no known
- * real value may appear verbatim), and each payload entry is recorded BEFORE the
- * request — so a failed cloud call still leaves an honest 'attempted' record.
+ * Size cap (combined blinded chunk characters) for one cloud call.
+ * Why conservative: every extra cloud call is another chance to hit the
+ * provider's "busy" errors (a 5-document run took 250-300s because of ~10
+ * retries), so packing whole documents cuts multi-document runs sharply.
+ * But an oversized prompt risks request/context failures and lower-quality
+ * extraction. 16000 characters is a few pages of blinded text — comfortably
+ * inside the model's context with room for instructions, legend and the
+ * JSON answer — so typical demo/sample corpora fit in 1-2 calls.
+ * Whole documents only: one document is NEVER split across two calls, and a
+ * document larger than the cap keeps its own call.
+ */
+const MAX_COMBINED_CHUNK_CHARS = 16000;
+
+/** One planned cloud call, known locally BEFORE anything is sent. */
+export interface SynthesizeCallProgress {
+  call: number; // 1-based index of this call
+  totalCalls: number; // planned calls for this run
+  docNames: string[]; // documents packed into this call (local names only)
+}
+
+/**
+ * Synthesizes a KnowledgeGraph from already-blinded chunks via cloud calls that
+ * pack WHOLE documents up to MAX_COMBINED_CHUNK_CHARS combined blinded
+ * characters (a document is never split across calls; an over-cap document
+ * keeps its own call). Records the exact outbound prompt in payloadLog per
+ * chunk alongside local-only rehydrated text.
+ * CV-SEC-2 (2026-11-20): every prompt — the EXACT batched string about to be
+ * sent, whatever the batching — passes a fail-closed pre-send gate (no known
+ * real value may appear verbatim) BEFORE any generate() call, and each payload
+ * entry is recorded BEFORE the request — so a failed cloud call still leaves
+ * an honest 'attempted' record. A blocked batch sends nothing at all.
  * onPayload lets callers persist entries as they are recorded, surviving a later throw.
+ * onCallProgress reports each planned call (call number, total, document
+ * names) before it starts, so the UI can show honest per-call progress.
  */
 export async function synthesizeGraph(
   blinded: AnonymizedChunk[],
   tokenLegend: string,
   onPayload?: (entry: PayloadLogEntry) => void,
-  onRetryNotice?: (attempt: number, waitMs: number, kind: string) => void
+  onRetryNotice?: (attempt: number, waitMs: number, kind: string) => void,
+  onCallProgress?: (progress: SynthesizeCallProgress) => void
 ): Promise<{ graph: KnowledgeGraph; payloadLog: PayloadLogEntry[]; usedModels: string[] }> {
   const groups = new Map<string, AnonymizedChunk[]>();
   for (const chunk of blinded) {
@@ -218,6 +250,30 @@ export async function synthesizeGraph(
       groups.set(chunk.docName, [chunk]);
     }
   }
+
+  // Deterministic aliases by first appearance order; filenames never leave the device.
+  const docs = [...groups.entries()].map(([docName, chunks], i) => ({
+    docName,
+    alias: `DOC_${i + 1}`,
+    chunks,
+    chars: chunks.reduce((n, c) => n + c.text.length, 0),
+  }));
+
+  // Pack whole documents into batches (see MAX_COMBINED_CHUNK_CHARS). A
+  // document is never split; an over-cap document still stands alone.
+  const batches: (typeof docs)[] = [];
+  let current: typeof docs = [];
+  let currentChars = 0;
+  for (const doc of docs) {
+    if (current.length > 0 && currentChars + doc.chars > MAX_COMBINED_CHUNK_CHARS) {
+      batches.push(current);
+      current = [];
+      currentChars = 0;
+    }
+    current.push(doc);
+    currentChars += doc.chars;
+  }
+  if (current.length > 0) batches.push(current);
 
   const merged: KnowledgeGraph = {
     ventures: [],
@@ -244,29 +300,36 @@ export async function synthesizeGraph(
     }
   }
 
-  // Deterministic aliases by first appearance order; filenames never leave the device.
-  let aliasCounter = 0;
-  for (const [docName, chunks] of groups) {
-    aliasCounter += 1;
-    const alias = `DOC_${aliasCounter}`;
-    const prompt = buildPrompt(chunks, tokenLegend, alias);
+  for (let i = 0; i < batches.length; i++) {
+    const batch = batches[i];
+    const prompt = buildPrompt(
+      batch.flatMap((doc) => doc.chunks.map((chunk) => ({ chunk, alias: doc.alias }))),
+      tokenLegend,
+    );
+    onCallProgress?.({ call: i + 1, totalCalls: batches.length, docNames: batch.map((d) => d.docName) });
 
-    const { hits: leaks } = findLeakedValues(knownValues, prompt, `pre-send ${alias}`);
+    // The gate scans the EXACT batched prompt that will be sent — nothing is
+    // sent, and nothing is recorded, if any known value appears anywhere in it.
+    const aliasList = batch.map((d) => d.alias).join(', ');
+    const docList = batch.map((d) => d.docName).join(', ');
+    const { hits: leaks } = findLeakedValues(knownValues, prompt, `pre-send ${aliasList}`);
     if (leaks.length > 0) {
       const tokens = [...new Set(leaks.map((h) => h.token.replace(/#\d+$/, '')))].sort().join(', ');
       throw new PayloadBlockedError(
-        `Payload blocked before sending ${alias} (${docName}): prompt contained known values for ${tokens}. Nothing was sent.`,
+        `Payload blocked before sending ${aliasList} (${docList}): prompt contained known values for ${tokens}. Nothing was sent.`,
       );
     }
 
-    const entries: PayloadLogEntry[] = chunks.map((chunk) => ({
-      docName: chunk.docName,
-      page: chunk.page,
-      localText: formatChunkLine(chunk, rehydrateChunkText(chunk.text, chunk.detected), chunk.docName),
-      cloudText: prompt,
-      sentAt: Date.now(),
-      status: 'attempted' as const,
-    }));
+    const entries: PayloadLogEntry[] = batch.flatMap((doc) =>
+      doc.chunks.map((chunk) => ({
+        docName: chunk.docName,
+        page: chunk.page,
+        localText: formatChunkLine(chunk, rehydrateChunkText(chunk.text, chunk.detected), chunk.docName),
+        cloudText: prompt,
+        sentAt: Date.now(),
+        status: 'attempted' as const,
+      })),
+    );
     for (const entry of entries) {
       payloadLog.push(entry);
       onPayload?.(entry);
@@ -278,15 +341,17 @@ export async function synthesizeGraph(
       entry.status = 'responded';
       entry.receivedAt = receivedAt;
     }
-    const docGraph = parseGraphResponse(result.text, new Map([[alias, docName]]));
+    // Cover EVERY alias in this batch so each rule resolves to its own document.
+    const aliasToDocName = new Map(batch.map((d) => [d.alias, d.docName]));
+    const batchGraph = parseGraphResponse(result.text, aliasToDocName);
     // Honest label: record which model actually ANSWERED — only after its reply
     // parsed (a model whose output is rejected contributed nothing; CEO round-6 directive).
     usedModels.add(result.model);
 
-    merged.ventures.push(...docGraph.ventures);
-    merged.partners.push(...docGraph.partners);
-    merged.products.push(...docGraph.products);
-    merged.dealRules.push(...docGraph.dealRules);
+    merged.ventures.push(...batchGraph.ventures);
+    merged.partners.push(...batchGraph.partners);
+    merged.products.push(...batchGraph.products);
+    merged.dealRules.push(...batchGraph.dealRules);
   }
 
   return { graph: merged, payloadLog, usedModels: [...usedModels] };

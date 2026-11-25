@@ -20,10 +20,14 @@ function graphJsonFor(alias: string): string {
   });
 }
 
+// Padded past the batching cap (see MAX_COMBINED_CHUNK_CHARS) so each
+// document keeps its own cloud call: this suite labels models across
+// MULTIPLE calls. Batching itself is covered by graphExtractor.batch.test.ts.
 function chunk(docName: string): AnonymizedChunk {
   return {
     docName, page: 1, index: 0,
-    text: '[VENTURE_1] agrees with [PARTNER_1]. Cap [DISCOUNT_CAP_1].',
+    text: '[VENTURE_1] agrees with [PARTNER_1]. Cap [DISCOUNT_CAP_1]. '
+      + 'terms of the supply agreement, reviewed locally. '.repeat(400),
     detected: [
       { text: 'Sari Dewi', token: '[PARTNER_1]', type: 'PARTNER' },
       { text: '40', token: '[COST_1]', type: 'COST' },

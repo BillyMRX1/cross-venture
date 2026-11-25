@@ -219,7 +219,9 @@ export function mountIngest(root: HTMLElement): void {
       try {
         const synth = await synthesizeGraph(anon.blinded, buildLegend(anon), (entry) => log.push(entry),
           (attempt, waitMs) => setStage('synthesize', 'run',
-            `Gemini is busy, retrying… (attempt ${attempt} of 3 failed, waiting ~${Math.max(1, Math.round(waitMs / 1000))}s)`));
+            `Gemini is busy, retrying… (attempt ${attempt} of 3 failed, waiting ~${Math.max(1, Math.round(waitMs / 1000))}s)`),
+          ({ call, totalCalls, docNames }) => setStage('synthesize', 'run',
+            `Sending call ${call} of ${totalCalls} — ${docNames.join(', ')}`));
         graph = synth.graph;
         setStage('synthesize', 'ok', `${graph.ventures.length} venture(s) · ${graph.products.length} SKU(s) · ${graph.dealRules.length} rule(s) · ${log.length} payload(s) logged${synth.usedModels.length ? ` · model(s): ${synth.usedModels.join(' + ')}` : ''}`, `${log.length} payloads`);
         // Honest attribution stays visible in the card header, not just the line.
