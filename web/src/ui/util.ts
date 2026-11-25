@@ -181,9 +181,15 @@ export function numericForms(int: string, dec: string | null): string[] {
 // themselves contain '[', so masking can only remove token-internal
 // matches — real verbatim values are never masked away.
 const PLACEHOLDER_TOKEN_RE = /\[[A-Z][A-Z0-9_]*_\d+(?:#\d+)?\]/g;
+// Chunk headers ("[DOC_1 p.10 #9]", built by graphExtractor.formatChunkLine
+// from chunk metadata) carry page/index numbers, not document text. A known
+// value "10" matched the "10" in "p.10" and blocked real multi-page PDFs.
+const CHUNK_HEADER_RE = /\[DOC_\d+ p\.\d+ #\d+\]/g;
 
 function maskPlaceholderTokens(text: string): string {
-  return text.replace(PLACEHOLDER_TOKEN_RE, (token) => '~'.repeat(token.length));
+  return text
+    .replace(CHUNK_HEADER_RE, (header) => '~'.repeat(header.length))
+    .replace(PLACEHOLDER_TOKEN_RE, (token) => '~'.repeat(token.length));
 }
 
 export function findLeakedValues(tokenMap: TokenMap, cloudText: string, where: string): LeakScan {

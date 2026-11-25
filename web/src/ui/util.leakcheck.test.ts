@@ -111,3 +111,14 @@ describe('findLeakedValues — honest checked count', () => {
     expect(scan.hits.length).toBe(0);
   });
 });
+
+describe('findLeakedValues — chunk headers are app metadata, not document text', () => {
+  it('a page number in the [DOC_n p.N #M] header never counts as a leak', () => {
+    const { hits } = findLeakedValues({ '[VALUE_1]': '10' }, '[DOC_1 p.10 #9] --- page [VALUE_1] ---', 'test');
+    expect(hits).toEqual([]);
+  });
+  it('the same value in the body text still counts', () => {
+    const { hits } = findLeakedValues({ '[VALUE_1]': '10' }, '[DOC_1 p.1 #0] the cap is 10 units', 'test');
+    expect(hits.length).toBe(1);
+  });
+});
