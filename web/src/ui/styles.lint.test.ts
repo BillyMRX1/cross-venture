@@ -34,7 +34,7 @@ const dark = paletteBlocks(css).filter((b) => b.includes('--bg-page: #101118'));
 
 // Signature tokens, verbatim from the picked mock (cv-stripe.html).
 const LIGHT_SIG = [
-  '#ffffff', '#ebeef1', '#d5dbe1', '#1a1b25', '#30313d', '#414552', '#687385',
+  '#ffffff', '#ebeef1', '#d5dbe1', '#1a1b25', '#30313d', '#414552', '#5c6676', '#5851f0',
   '#635bff', '#5349f5', '#f5f6ff', '#ffe7f2', '#b3093c', '#d7f7c2', '#006908',
   '#fcedb9', '#a82c00', '#ebeef1',
 ];
