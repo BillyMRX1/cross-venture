@@ -11,10 +11,19 @@ import { onDeviceStatus } from '../hybrid';
 import { anonymizeChunks } from '../ingest/anonymizer';
 import { chunkDocument } from '../ingest/chunker';
 import { extractTextFromFile } from '../ingest/textextract';
-import { saveWorkspaceLocal } from '../storage/db';
+import { clearWorkspacesLocal, saveWorkspaceLocal } from '../storage/db';
+import {
+  groupDocumentsByVenture,
+  mergeWorkspaces,
+  removeDocumentFromWorkspace,
+} from '../storage/workspaceOps';
 import type { AnonymizeResult, DocChunk, KnowledgeGraph, PayloadLogEntry, Workspace } from '../types';
-import { store } from './state';
-import { el, errText, newId, toast } from './util';
+import { openConfirmDialog } from './confirmDialog';
+import { buildRemoveDocumentDialog } from './dataSettings';
+import { remapRequestVentureIds, removeRequestsForVenture } from './requestModel';
+import { syncRequestsFromStorage } from './requests';
+import { goSync, hasSyncedCopy, store } from './state';
+import { el, errText, hydrate, newId, toast } from './util';
 import { isSpaFallback } from '../ingest/spaFallback';
 
 /**
@@ -233,8 +242,8 @@ export function mountIngest(root: HTMLElement): void {
           : `${errText(e)} — workspace kept WITHOUT the cloud graph (${log.length} attempted payload(s) recorded)`);
       }
 
-      const ws: Workspace = {
-        id: newId(),
+      const incomingWs: Workspace = {
+        id: store.workspace?.id ?? newId(),
         name: texts.map((t) => t.docName).join(' + ').slice(0, 80) || 'Workspace',
         graph,
         tokenMap: anon.tokenMap,
@@ -242,6 +251,7 @@ export function mountIngest(root: HTMLElement): void {
         payloadLog: log,
         updatedAt: Date.now(),
       };
+      const { workspace: ws, ventureIdMap } = mergeWorkspaces(store.workspace, incomingWs);
 
       // Stage 5 — local persistence
       setStage('save', 'run');
@@ -252,19 +262,23 @@ export function mountIngest(root: HTMLElement): void {
         setStage('save', 'skip', `Not persisted: ${errText(e)}`, '—');
       }
 
-      const graphCount = graph.ventures.length + graph.products.length + graph.dealRules.length;
+      if (Object.keys(ventureIdMap).length > 0 && remapRequestVentureIds(ventureIdMap)) {
+        syncRequestsFromStorage();
+      }
+
+      const graphCount = ws.graph.ventures.length + ws.graph.products.length + ws.graph.dealRules.length;
 
       // Result summary: numbers the pipeline already proved on screen.
       wsStats.replaceChildren(
-        statCell('Documents', texts.length),
-        statCell('Chunks', chunks.length),
-        statCell('Typed tokens', Object.keys(anon.tokenMap).length),
+        statCell('Documents', new Set(ws.docs.map((d) => d.docName.toLowerCase())).size || texts.length),
+        statCell('Chunks', ws.docs.length || chunks.length),
+        statCell('Typed tokens', Object.keys(ws.tokenMap).length),
         statCell('Graph entries', graphCount),
       );
       wsSummary.hidden = false;
 
       store.setWorkspace(ws);
-      const full = graph.ventures.length > 0;
+      const full = ws.graph.ventures.length > 0;
       toast(
         full
           ? `Workspace ready — open Settings → Privacy to see the exact cloud payload`
@@ -411,7 +425,136 @@ export function mountIngest(root: HTMLElement): void {
     statusLine,
   );
 
+  /* ---------- loaded documents grouped by venture ---------- */
+
+  const loadedDocsBody = el('div', { id: 'loadedDocsList' });
+  const loadedDocsSection = el(
+    'div',
+    { class: 'section' },
+    el('h2', { class: 'section-title' }, 'Loaded documents'),
+    loadedDocsBody,
+  );
+
+  async function handleRemoveDocument(docName: string): Promise<void> {
+    const ws = store.workspace;
+    if (!ws) return;
+
+    // Preview removal without mutating state so the confirm dialog states exact effects.
+    const preview = removeDocumentFromWorkspace(ws, docName);
+    const willRemoveVentureNames = preview.removedVentureIds.map((vid) => {
+      const v = ws.graph.ventures.find((x) => x.venture_id === vid);
+      return v ? hydrate(ws.tokenMap, v.venture_token) || v.venture_id : vid;
+    });
+
+    const opts = buildRemoveDocumentDialog(
+      {
+        docName,
+        ruleCount: preview.removedRuleCount,
+        willRemoveVentureNames,
+        hasSyncedCopy: hasSyncedCopy(),
+      },
+      goSync,
+    );
+
+    const confirmed = await openConfirmDialog(opts);
+    if (!confirmed) return;
+
+    const latest = store.workspace;
+    if (!latest) return;
+    const result = removeDocumentFromWorkspace(latest, docName);
+
+    for (const vid of result.removedVentureIds) {
+      removeRequestsForVenture(vid);
+    }
+
+    if (result.workspace === null) {
+      await clearWorkspacesLocal();
+      store.setWorkspace(null);
+    } else {
+      await saveWorkspaceLocal(result.workspace);
+      store.setWorkspace(result.workspace);
+    }
+    syncRequestsFromStorage();
+    toast(`Removed ${docName} from this device.`, 'ok');
+  }
+
+  function renderLoadedDocs(): void {
+    const ws = store.workspace;
+    if (!ws || ws.docs.length === 0) {
+      loadedDocsBody.replaceChildren(
+        el(
+          'p',
+          { class: 'hint' },
+          'No documents loaded on this device yet. Upload files, paste text, or load the sample workspace below.',
+        ),
+      );
+      return;
+    }
+
+    const groups = groupDocumentsByVenture(ws).filter((g) => g.docs.length > 0);
+    if (groups.length === 0) {
+      loadedDocsBody.replaceChildren(
+        el('p', { class: 'hint' }, 'No documents loaded on this device yet.'),
+      );
+      return;
+    }
+
+    const groupNodes = groups.map((group) => {
+      const rows = group.docs.map((entry) => {
+        const removeBtn = el(
+          'button',
+          { class: 'btn btn-secondary', type: 'button', 'aria-label': `Remove ${entry.docName}` },
+          'Remove',
+        );
+        removeBtn.addEventListener('click', () => {
+          void handleRemoveDocument(entry.docName).catch((e: unknown) => {
+            toast(`Could not remove document: ${errText(e)}`, 'error');
+          });
+        });
+        return el(
+          'tr',
+          {},
+          el('td', {}, entry.docName),
+          el('td', {}, `${entry.pages} ${entry.pages === 1 ? 'page' : 'pages'}`),
+          el('td', {}, `${entry.ruleCount} ${entry.ruleCount === 1 ? 'rule' : 'rules'}`),
+          el('td', { class: 'doc-actions-cell' }, removeBtn),
+        );
+      });
+
+      const table = el(
+        'table',
+        { class: 'data-table' },
+        el(
+          'thead',
+          {},
+          el(
+            'tr',
+            {},
+            el('th', { scope: 'col' }, 'Document'),
+            el('th', { scope: 'col' }, 'Pages'),
+            el('th', { scope: 'col' }, 'Extracted rules'),
+            el('th', { scope: 'col' }, 'Action'),
+          ),
+        ),
+        el('tbody', {}, ...rows),
+      );
+
+      return el(
+        'div',
+        { class: 'doc-group', 'data-venture-group': group.ventureName },
+        el('h3', { class: 'doc-group-title' }, group.ventureName),
+        table,
+      );
+    });
+
+    loadedDocsBody.replaceChildren(...groupNodes);
+  }
+
+  store.subscribe(renderLoadedDocs);
+  renderLoadedDocs();
+
   root.replaceChildren(
+    loadedDocsSection,
     el('div', { class: 'grid-2' }, filesCard, pasteCard),
     sampleCard,
     progressCard,

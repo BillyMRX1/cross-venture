@@ -3,7 +3,8 @@
 // Firebase env vars are absent instead of crashing.
 import { exportVaultKey, generateVaultKey } from '../crypto/vault';
 import { pullAndDecrypt, pushEncrypted, ReadOnlyWorkspaceError } from '../storage/db';
-import { goTab, lsGet, lsSet, store } from './state';
+import { deduplicateWorkspace } from '../storage/workspaceOps';
+import { goTab, lsGet, lsSet, markSyncedCopy, store } from './state';
 import { copyText, el, errText, newId, toast } from './util';
 
 const WSID_KEY = 'cv.wsId';
@@ -130,6 +131,7 @@ export function mountSync(root: HTMLElement): void {
       setStatus('note', 'Encrypting on this device and uploading…');
       try {
         await pushEncrypted(ws.id, { graph: ws.graph, tokenMap: ws.tokenMap }, key);
+        markSyncedCopy(ws.id);
         setStatus('note--ok', 'Pushed — the server holds only ciphertext, never plaintext.');
         toast('Encrypted workspace pushed', 'ok');
       } catch (e) {
@@ -177,7 +179,7 @@ export function mountSync(root: HTMLElement): void {
             /* pairing format optional — decrypt result is what matters */
           }
           const prev = store.workspace;
-          store.setWorkspace({
+          const { workspace: deduped } = deduplicateWorkspace({
             id: wsId,
             name: `Synced workspace (${wsId.slice(0, 8)}…)`,
             graph: result.graph,
@@ -186,6 +188,8 @@ export function mountSync(root: HTMLElement): void {
             payloadLog: prev?.payloadLog ?? [],
             updatedAt: Date.now(),
           });
+          markSyncedCopy(wsId);
+          store.setWorkspace(deduped);
           setStatus('note--ok', `Workspace ${wsId.slice(0, 8)}… decrypted on this device. The Requests page now has the graph.`);
           toast('Synced workspace loaded', 'ok');
         }

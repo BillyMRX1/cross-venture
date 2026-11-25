@@ -112,6 +112,16 @@ const SKU_LABEL_PHRASES: ReadonlySet<string> = new Set([
   'standard list price',
   'list price',
   'price list',
+  'net realized unit price',
+  'realized unit price',
+  'net unit price',
+  'retail price',
+  'unit price',
+  'unit cost',
+  'gross margin',
+  'net selling price',
+  'margin floor',
+  'discount cap',
 ]);
 
 function isSkuLabel(value: string): boolean {
