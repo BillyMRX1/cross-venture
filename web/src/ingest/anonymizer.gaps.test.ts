@@ -142,3 +142,21 @@ describe('anonymizer gaps — round 2 (coordinator)', () => {
     expect(blinded[1].text).toContain('the Company');
   });
 });
+
+describe('anonymizer gaps — round 3 (titled people and attendees)', () => {
+  it('a person introduced by a job title or as an attendee is blinded everywhere', async () => {
+    const { blinded } = await anonymizeChunks(
+      doc(
+        'Advisory Attendee Priya Raman (Head of Sourcing) joined by video.',
+        'Priya Raman, Head of Sourcing, reported the delays. Later Priya Raman left.',
+      ),
+    );
+    for (const chunk of blinded) expect(chunk.text).not.toMatch(/Priya|Raman/);
+  });
+
+  it('job titles and section headings are not people', async () => {
+    const { blinded } = await anonymizeChunks(doc('Gross Margin, Head of the table. Board Meeting (Director review).'));
+    expect(blinded[0].text).toContain('Gross Margin');
+    expect(blinded[0].text).toContain('Board Meeting');
+  });
+});

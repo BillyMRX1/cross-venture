@@ -153,6 +153,33 @@ const PERSON_BLOCK_RE = new RegExp(
   String.raw`\b(?:By|Name|Title|Chair)[ \t]*:[ \t*"'\s]*${PERSON_NAME}`,
   'g',
 );
+// "<Name>, Head of Production", "<Name> (Head of ...", "Attendee <Name>",
+// "/s/ <Name>" — names introduced by a job title or attendance/signature
+// wording (real minutes leaked an advisory attendee this way).
+const PERSON_TITLE_WORDS = String.raw`(?:Head|Director|Manager|Lead|Chief|Officer|VP|Vice|President|Partner|Founder|Co-founder|Owner|Member|Chair|Secretary|Treasurer|Counsel|Controller|Analyst|Consultant|Advisor|Adviser|Engineer|Designer|Buyer|Roaster|CEO|CFO|COO|CTO)`;
+const PERSON_TITLED_RE = new RegExp(
+  String.raw`${PERSON_NAME}(?=[ \t]*(?:,|\(|—|–)[ \t]*(?:[A-Z][a-z]+[ \t]+)?${PERSON_TITLE_WORDS}\b)`,
+  'g',
+);
+// Capitalized business phrases sit before titles too ("Gross Margin, Head
+// of the table", "Board Meeting (Director review)"): never people.
+const NOT_PERSON_WORDS: ReadonlySet<string> = new Set(
+  ('margin gross net price prices cost costs meeting board agreement company partner partners partnership ' +
+   'member members managing venture wholesale retail list floor cap discount bulk volume minimum maximum ' +
+   'quarterly annual operational review report section article schedule exhibit annex party parties ' +
+   'effective date total open supply chain production product products sales marketing finance financial ' +
+   'commercial brand creative capital account interest equity profit revenue rebate order purchase terms ' +
+   'agenda quorum minutes motion vote resolution advisory attendee voting new york north america ' +
+   'standard client services service rate card direct delivery joint value tax law governing').split(' '),
+);
+function isTitledStop(value: string): boolean {
+  return isPersonStop(value) ||
+    value.split(/\s+/).some((w) => NOT_PERSON_WORDS.has(w.toLowerCase().replace(/[^a-z]/g, '')));
+}
+const PERSON_ATTEND_RE = new RegExp(
+  String.raw`\b(?:[Aa]ttendees?|[Pp]resent|[Aa]bsent|[Ss]igned|/s/|[Pp]repared by|[Rr]ecorded by|[Mm]inutes by)[ \t]*:?[ \t]*${PERSON_NAME}`,
+  'g',
+);
 const PERSON_HONORIFIC_RE = new RegExp(
   String.raw`\b(?:Mr|Mrs|Ms|Dr|Prof)\.?[ \t]+${PERSON_NAME}`,
   'g',
@@ -453,6 +480,8 @@ function detectInChunk(chunk: DocChunk, chunkIdx: number): Candidate[] {
   addCaptureMatches(out, text, PERSON_PROSE_RE, 'NAME', chunkIdx, exclusions, 'PARTNER', isPersonStop);
   addCaptureMatches(out, text, PERSON_BLOCK_RE, 'NAME', chunkIdx, exclusions, 'PARTNER', isPersonStop);
   addCaptureMatches(out, text, PERSON_HONORIFIC_RE, 'NAME', chunkIdx, exclusions, 'PARTNER', isPersonStop);
+  addCaptureMatches(out, text, PERSON_TITLED_RE, 'NAME', chunkIdx, exclusions, 'PARTNER', isTitledStop);
+  addCaptureMatches(out, text, PERSON_ATTEND_RE, 'NAME', chunkIdx, exclusions, 'PARTNER', isTitledStop);
   addCaptureMatches(
     out,
     text,
