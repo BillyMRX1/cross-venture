@@ -200,17 +200,28 @@ function buildPrompt(
 
 /**
  * Size cap (combined blinded chunk characters) for one cloud call.
- * Why conservative: every extra cloud call is another chance to hit the
- * provider's "busy" errors (a 5-document run took 250-300s because of ~10
- * retries), so packing whole documents cuts multi-document runs sharply.
- * But an oversized prompt risks request/context failures and lower-quality
- * extraction. 16000 characters is a few pages of blinded text — comfortably
- * inside the model's context with room for instructions, legend and the
- * JSON answer — so typical demo/sample corpora fit in 1-2 calls.
+ * Left at 16,000 characters by design (numbers-backed):
+ * - Input context is not the limit: Gemini Flash accepts ~1M tokens (~4M chars),
+ *   so even five 27k-char contracts (~135k chars ≈ 34k tokens) fit in input.
+ * - Output size, per-call latency, and retry blast radius ARE the limits:
+ *   each 11–27k-char blinded contract (~3–7k input tokens) produces ~10–30
+ *   structured deal rules with verbatim blinded excerpts (~3–6k chars /
+ *   ~800–1,500 output tokens of JSON) and takes ~20–40s to generate. Packing
+ *   two ~20k contracts into one ~40k prompt roughly doubles output generation
+ *   time, raises the risk of JSON truncation near default output limits (~8k
+ *   tokens), eliminates parallelism across the 3-slot pool, and turns a single
+ *   transient failure into two lost contracts instead of one.
+ * - At 16,000 chars: small sample/demo corpora (~10k total across 4 docs) still
+ *   pack into 1 call, while large real contracts (11–27k chars each) stay at
+ *   1 contract per call and run concurrently in the 3-slot pool with isolated
+ *   per-document retry.
  * Whole documents only: one document is NEVER split across two calls, and a
  * document larger than the cap keeps its own call.
  */
 const MAX_COMBINED_CHUNK_CHARS = 16000;
+
+/** Default concurrent cloud synthesis pool size (single source of truth). */
+export const SYNTHESIZE_CONCURRENCY = 3;
 
 /** One planned cloud call, known locally BEFORE anything is sent. */
 export interface SynthesizeCallProgress {
@@ -219,12 +230,78 @@ export interface SynthesizeCallProgress {
   docNames: string[]; // documents packed into this call (local names only)
 }
 
+/** Live pool progress emitted as calls start and finish concurrently. */
+export interface SynthesizePoolProgress {
+  totalCalls: number;
+  inFlight: number;
+  done: number;
+  failed: number;
+  activeDocNames: string[]; // local names of documents currently in flight
+  lastEvent: 'started' | 'succeeded' | 'failed';
+  call: number; // 1-based index of the call that triggered this update
+  docNames: string[];
+}
+
+/** Details for a batch that still failed after bounded retries. */
+export interface SynthesizeBatchFailure {
+  call: number; // 1-based index of the failed batch
+  docNames: string[]; // local names of documents in the failed batch
+  chunks: AnonymizedChunk[]; // exact blinded chunks for one-click document retry
+  error: unknown;
+  message: string;
+}
+
+export interface SynthesizeOptions {
+  /** Override the default pool size (SYNTHESIZE_CONCURRENCY = 3). */
+  concurrency?: number;
+  /**
+   * When true, non-gate batch errors are returned in `failures` while the other
+   * calls still finish and merge into `graph`. Privacy-gate blocks
+   * (PayloadBlockedError) always throw fail-closed.
+   */
+  allowPartial?: boolean;
+  /** Extra known real values (e.g. full workspace tokenMap) checked by the pre-send gate on single-doc retries. */
+  extraKnownValues?: TokenMap;
+  /** Live pool progress (calls in flight and done). */
+  onPoolProgress?: (progress: SynthesizePoolProgress) => void;
+  /** Per-batch retry notice identifying which documents are waiting on backoff. */
+  onBatchRetry?: (info: { call: number; docNames: string[]; attempt: number; waitMs: number; kind: string }) => void;
+}
+
+export interface SynthesizeResult {
+  graph: KnowledgeGraph;
+  payloadLog: PayloadLogEntry[];
+  usedModels: string[];
+  failures: SynthesizeBatchFailure[];
+  /** Per-batch graphs indexed by batch position (null when that batch failed). */
+  batchGraphs: Array<KnowledgeGraph | null>;
+}
+
+/** Merge multiple KnowledgeGraph fragments in exact array order. */
+export function mergeKnowledgeGraphs(graphs: KnowledgeGraph[]): KnowledgeGraph {
+  const merged: KnowledgeGraph = {
+    ventures: [],
+    partners: [],
+    products: [],
+    dealRules: [],
+  };
+  for (const g of graphs) {
+    merged.ventures.push(...g.ventures);
+    merged.partners.push(...g.partners);
+    merged.products.push(...g.products);
+    merged.dealRules.push(...g.dealRules);
+  }
+  return merged;
+}
+
 /**
- * Synthesizes a KnowledgeGraph from already-blinded chunks via cloud calls that
- * pack WHOLE documents up to MAX_COMBINED_CHUNK_CHARS combined blinded
- * characters (a document is never split across calls; an over-cap document
- * keeps its own call). Records the exact outbound prompt in payloadLog per
- * chunk alongside local-only rehydrated text.
+ * Synthesizes a KnowledgeGraph from already-blinded chunks via concurrent cloud
+ * calls (pool size SYNTHESIZE_CONCURRENCY = 3) that pack WHOLE documents up to
+ * MAX_COMBINED_CHUNK_CHARS combined blinded characters (a document is never
+ * split across calls; an over-cap document keeps its own call). Results are
+ * merged in deterministic document order regardless of completion order.
+ * Records the exact outbound prompt in payloadLog per chunk alongside
+ * local-only rehydrated text.
  * CV-SEC-2 (2026-11-20): every prompt — the EXACT batched string about to be
  * sent, whatever the batching — passes a fail-closed pre-send gate (no known
  * real value may appear verbatim) BEFORE any generate() call, and each payload
@@ -239,8 +316,9 @@ export async function synthesizeGraph(
   tokenLegend: string,
   onPayload?: (entry: PayloadLogEntry) => void,
   onRetryNotice?: (attempt: number, waitMs: number, kind: string) => void,
-  onCallProgress?: (progress: SynthesizeCallProgress) => void
-): Promise<{ graph: KnowledgeGraph; payloadLog: PayloadLogEntry[]; usedModels: string[] }> {
+  onCallProgress?: (progress: SynthesizeCallProgress) => void,
+  options?: SynthesizeOptions,
+): Promise<SynthesizeResult> {
   const groups = new Map<string, AnonymizedChunk[]>();
   for (const chunk of blinded) {
     const existing = groups.get(chunk.docName);
@@ -299,60 +377,176 @@ export async function synthesizeGraph(
       }
     }
   }
-
-  for (let i = 0; i < batches.length; i++) {
-    const batch = batches[i];
-    const prompt = buildPrompt(
-      batch.flatMap((doc) => doc.chunks.map((chunk) => ({ chunk, alias: doc.alias }))),
-      tokenLegend,
-    );
-    onCallProgress?.({ call: i + 1, totalCalls: batches.length, docNames: batch.map((d) => d.docName) });
-
-    // The gate scans the EXACT batched prompt that will be sent — nothing is
-    // sent, and nothing is recorded, if any known value appears anywhere in it.
-    const aliasList = batch.map((d) => d.alias).join(', ');
-    const docList = batch.map((d) => d.docName).join(', ');
-    const { hits: leaks } = findLeakedValues(knownValues, prompt, `pre-send ${aliasList}`);
-    if (leaks.length > 0) {
-      const tokens = [...new Set(leaks.map((h) => h.token.replace(/#\d+$/, '')))].sort().join(', ');
-      throw new PayloadBlockedError(
-        `Payload blocked before sending ${aliasList} (${docList}): prompt contained known values for ${tokens}. Nothing was sent.`,
-      );
+  if (options?.extraKnownValues) {
+    for (const [token, value] of Object.entries(options.extraKnownValues)) {
+      if (value.trim().length === 0) continue;
+      if (!(token in knownValues)) {
+        knownValues[token] = value;
+      } else if (knownValues[token] !== value) {
+        knownValues[`${token}#${Object.keys(knownValues).length}`] = value;
+      }
     }
-
-    const entries: PayloadLogEntry[] = batch.flatMap((doc) =>
-      doc.chunks.map((chunk) => ({
-        docName: chunk.docName,
-        page: chunk.page,
-        localText: formatChunkLine(chunk, rehydrateChunkText(chunk.text, chunk.detected), chunk.docName),
-        cloudText: prompt,
-        sentAt: Date.now(),
-        status: 'attempted' as const,
-      })),
-    );
-    for (const entry of entries) {
-      payloadLog.push(entry);
-      onPayload?.(entry);
-    }
-
-    const result = await generate('synthesize', prompt, GRAPH_RESPONSE_SCHEMA, { onRetry: onRetryNotice });
-    const receivedAt = Date.now();
-    for (const entry of entries) {
-      entry.status = 'responded';
-      entry.receivedAt = receivedAt;
-    }
-    // Cover EVERY alias in this batch so each rule resolves to its own document.
-    const aliasToDocName = new Map(batch.map((d) => [d.alias, d.docName]));
-    const batchGraph = parseGraphResponse(result.text, aliasToDocName);
-    // Honest label: record which model actually ANSWERED — only after its reply
-    // parsed (a model whose output is rejected contributed nothing; CEO round-6 directive).
-    usedModels.add(result.model);
-
-    merged.ventures.push(...batchGraph.ventures);
-    merged.partners.push(...batchGraph.partners);
-    merged.products.push(...batchGraph.products);
-    merged.dealRules.push(...batchGraph.dealRules);
   }
 
-  return { graph: merged, payloadLog, usedModels: [...usedModels] };
+  const batchGraphs: Array<KnowledgeGraph | null> = new Array(batches.length).fill(null);
+  const batchModels: Array<string | null> = new Array(batches.length).fill(null);
+  const batchPayloads: PayloadLogEntry[][] = Array.from({ length: batches.length }, () => []);
+  const batchFailures: Array<SynthesizeBatchFailure | null> = new Array(batches.length).fill(null);
+  let blockedError: PayloadBlockedError | null = null;
+
+  const activeCalls = new Map<number, string[]>();
+  let doneCount = 0;
+  let failedCount = 0;
+
+  function emitPoolProgress(lastEvent: SynthesizePoolProgress['lastEvent'], idx: number, docNames: string[]): void {
+    options?.onPoolProgress?.({
+      totalCalls: batches.length,
+      inFlight: activeCalls.size,
+      done: doneCount,
+      failed: failedCount,
+      activeDocNames: [...activeCalls.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .flatMap(([, names]) => names),
+      lastEvent,
+      call: idx + 1,
+      docNames,
+    });
+  }
+
+  const poolSize = Math.max(1, Math.min(options?.concurrency ?? SYNTHESIZE_CONCURRENCY, batches.length));
+  let nextIndex = 0;
+
+  async function runWorker(): Promise<void> {
+    while (true) {
+      if (blockedError) return;
+      const i = nextIndex++;
+      if (i >= batches.length) return;
+
+      const batch = batches[i];
+      const batchDocNames = batch.map((d) => d.docName);
+      const prompt = buildPrompt(
+        batch.flatMap((doc) => doc.chunks.map((chunk) => ({ chunk, alias: doc.alias }))),
+        tokenLegend,
+      );
+      onCallProgress?.({ call: i + 1, totalCalls: batches.length, docNames: batchDocNames });
+
+      try {
+        // The gate scans the EXACT batched prompt that will be sent — nothing is
+        // sent, and nothing is recorded, if any known value appears anywhere in it.
+        const aliasList = batch.map((d) => d.alias).join(', ');
+        const docList = batch.map((d) => d.docName).join(', ');
+        const { hits: leaks } = findLeakedValues(knownValues, prompt, `pre-send ${aliasList}`);
+        if (leaks.length > 0) {
+          const tokens = [...new Set(leaks.map((h) => h.token.replace(/#\d+$/, '')))].sort().join(', ');
+          throw new PayloadBlockedError(
+            `Payload blocked before sending ${aliasList} (${docList}): prompt contained known values for ${tokens}. Nothing was sent.`,
+          );
+        }
+
+        const entries: PayloadLogEntry[] = batch.flatMap((doc) =>
+          doc.chunks.map((chunk) => ({
+            docName: chunk.docName,
+            page: chunk.page,
+            localText: formatChunkLine(chunk, rehydrateChunkText(chunk.text, chunk.detected), chunk.docName),
+            cloudText: prompt,
+            sentAt: Date.now(),
+            status: 'attempted' as const,
+          })),
+        );
+        batchPayloads[i] = entries;
+        for (const entry of entries) {
+          onPayload?.(entry);
+        }
+
+        activeCalls.set(i, batchDocNames);
+        emitPoolProgress('started', i, batchDocNames);
+
+        const result = await generate('synthesize', prompt, GRAPH_RESPONSE_SCHEMA, {
+          onRetry: (attempt, waitMs, kind) => {
+            onRetryNotice?.(attempt, waitMs, kind);
+            options?.onBatchRetry?.({ call: i + 1, docNames: batchDocNames, attempt, waitMs, kind });
+          },
+        });
+        const receivedAt = Date.now();
+        for (const entry of entries) {
+          entry.status = 'responded';
+          entry.receivedAt = receivedAt;
+        }
+        // Cover EVERY alias in this batch so each rule resolves to its own document.
+        const aliasToDocName = new Map(batch.map((d) => [d.alias, d.docName]));
+        const batchGraph = parseGraphResponse(result.text, aliasToDocName);
+        // Honest label: record which model actually ANSWERED — only after its reply
+        // parsed (a model whose output is rejected contributed nothing; CEO round-6 directive).
+        batchModels[i] = result.model;
+        batchGraphs[i] = batchGraph;
+        activeCalls.delete(i);
+        doneCount += 1;
+        emitPoolProgress('succeeded', i, batchDocNames);
+      } catch (err) {
+        activeCalls.delete(i);
+        if (err instanceof PayloadBlockedError) {
+          if (!blockedError) blockedError = err;
+          return;
+        }
+        failedCount += 1;
+        batchFailures[i] = {
+          call: i + 1,
+          docNames: batchDocNames,
+          chunks: batch.flatMap((d) => d.chunks),
+          error: err,
+          message: err instanceof Error ? err.message || err.name : String(err),
+        };
+        emitPoolProgress('failed', i, batchDocNames);
+      }
+    }
+  }
+
+  if (batches.length > 0) {
+    await Promise.all(Array.from({ length: poolSize }, () => runWorker()));
+  }
+
+  if (blockedError) {
+    throw blockedError;
+  }
+
+  // Reassemble results in deterministic document order regardless of completion order.
+  const failures: SynthesizeBatchFailure[] = [];
+  for (let i = 0; i < batches.length; i++) {
+    const batchGraph = batchGraphs[i];
+    if (batchGraph) {
+      merged.ventures.push(...batchGraph.ventures);
+      merged.partners.push(...batchGraph.partners);
+      merged.products.push(...batchGraph.products);
+      merged.dealRules.push(...batchGraph.dealRules);
+    }
+    const model = batchModels[i];
+    if (model) usedModels.add(model);
+    payloadLog.push(...batchPayloads[i]);
+    const failure = batchFailures[i];
+    if (failure) failures.push(failure);
+  }
+
+  if (failures.length > 0 && !options?.allowPartial) {
+    throw failures[0].error;
+  }
+
+  return { graph: merged, payloadLog, usedModels: [...usedModels], failures, batchGraphs };
+}
+
+/**
+ * Re-synthesizes a single failed document without re-running the rest of the
+ * workspace. Uses the exact same pre-send privacy gate and payload logger.
+ */
+export async function retrySynthesizeDocument(
+  docChunks: AnonymizedChunk[],
+  tokenLegend: string,
+  onPayload?: (entry: PayloadLogEntry) => void,
+  onRetryNotice?: (attempt: number, waitMs: number, kind: string) => void,
+  onCallProgress?: (progress: SynthesizeCallProgress) => void,
+  options?: SynthesizeOptions,
+): Promise<SynthesizeResult> {
+  return synthesizeGraph(docChunks, tokenLegend, onPayload, onRetryNotice, onCallProgress, {
+    ...options,
+    concurrency: 1,
+  });
 }
