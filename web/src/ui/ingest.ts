@@ -6,8 +6,14 @@
 // and engine tags. Pipeline logic is untouched; tags are honest (no NER claim
 // unless on-device NER is actually available, model names only ever come from
 // usedModels).
-import { PayloadBlockedError, synthesizeGraph } from '../cloud/graphExtractor';
-import { onDeviceStatus } from '../hybrid';
+import {
+  PayloadBlockedError,
+  mergeKnowledgeGraphs,
+  retrySynthesizeDocument,
+  synthesizeGraph,
+  type SynthesizePoolProgress,
+} from '../cloud/graphExtractor';
+import { SYNTHESIZE_MAX_ATTEMPTS, onDeviceStatus } from '../hybrid';
 import { anonymizeChunks } from '../ingest/anonymizer';
 import { chunkDocument } from '../ingest/chunker';
 import { extractTextFromFile } from '../ingest/textextract';
@@ -17,7 +23,7 @@ import {
   mergeWorkspaces,
   removeDocumentFromWorkspace,
 } from '../storage/workspaceOps';
-import type { AnonymizeResult, DocChunk, KnowledgeGraph, PayloadLogEntry, Workspace } from '../types';
+import type { AnonymizeResult, AnonymizedChunk, DocChunk, KnowledgeGraph, PayloadLogEntry, Workspace } from '../types';
 import { openConfirmDialog } from './confirmDialog';
 import { buildRemoveDocumentDialog } from './dataSettings';
 import { remapRequestVentureIds, removeRequestsForVenture } from './requestModel';
@@ -62,6 +68,30 @@ const STATE_CLASS: Record<StageState, string> = {
 
 const EMPTY_GRAPH: KnowledgeGraph = { ventures: [], partners: [], products: [], dealRules: [] };
 
+/** Formats live concurrent pool progress for stage 04 (done + in-flight counts). */
+export function formatSynthesizeProgress(p: SynthesizePoolProgress): { text: string; metric: string } {
+  const failSuffix = p.failed > 0 ? ` (${p.failed} failed)` : '';
+  const donePart = `${p.done} of ${p.totalCalls} done${failSuffix}`;
+  const inFlightPart =
+    p.inFlight > 0
+      ? ` · ${p.inFlight} in flight${p.activeDocNames.length ? ` — ${p.activeDocNames.join(', ')}` : ''}`
+      : '';
+  return {
+    text: `${donePart}${inFlightPart}`,
+    metric: `${p.done}/${p.totalCalls} done`,
+  };
+}
+
+/** Merges succeeded per-slot graphs back in original document order. */
+export function mergeOrderedGraphSlots(slots: Map<number, KnowledgeGraph>, totalSlots: number): KnowledgeGraph {
+  const ordered: KnowledgeGraph[] = [];
+  for (let i = 0; i < totalSlots; i++) {
+    const g = slots.get(i);
+    if (g) ordered.push(g);
+  }
+  return mergeKnowledgeGraphs(ordered);
+}
+
 function clockNow(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
@@ -83,6 +113,29 @@ export function mountIngest(root: HTMLElement): void {
     wsStats,
   );
   wsSummary.hidden = true;
+
+  // Failed-document retry banner (shown only when one or more cloud calls fail).
+  const failedBox = el('div', { class: 'banner banner--fail', 'aria-live': 'polite' });
+  failedBox.hidden = true;
+
+  interface FailedDocItem {
+    docName: string;
+    slotIndex: number;
+    chunks: AnonymizedChunk[];
+    message: string;
+  }
+  interface LastRunState {
+    anon: AnonymizeResult;
+    legend: string;
+    docCount: number;
+    chunkCount: number;
+    ws: Workspace;
+    orderedSlots: Map<number, KnowledgeGraph>;
+    totalSlots: number;
+    usedModels: Set<string>;
+    failedDocs: Map<string, FailedDocItem>;
+  }
+  let lastRun: LastRunState | null = null;
 
   // Screen-2 ledger: three local rows, the privacy boundary, two rows below.
   const ledger = el('div', { class: 'ledger', role: 'table', 'aria-label': 'Pipeline stages' });
@@ -150,6 +203,144 @@ export function mountIngest(root: HTMLElement): void {
     modelChip.textContent = '';
     wsStats.replaceChildren();
     wsSummary.hidden = true;
+    failedBox.replaceChildren();
+    failedBox.hidden = true;
+    lastRun = null;
+  }
+
+  function updateSummary(docCount: number, chunkCount: number, tokenCount: number, graph: KnowledgeGraph): void {
+    const graphCount = graph.ventures.length + graph.products.length + graph.dealRules.length;
+    wsStats.replaceChildren(
+      statCell('Documents', docCount),
+      statCell('Chunks', chunkCount),
+      statCell('Typed tokens', tokenCount),
+      statCell('Graph entries', graphCount),
+    );
+    wsSummary.hidden = false;
+  }
+
+  function renderFailedDocs(): void {
+    if (!lastRun || lastRun.failedDocs.size === 0) {
+      failedBox.replaceChildren();
+      failedBox.hidden = true;
+      return;
+    }
+    const items = [...lastRun.failedDocs.values()];
+    const rows = items.map((item) => {
+      const retryBtn = el('button', { class: 'btn btn-secondary', type: 'button' }, 'Retry this document');
+      retryBtn.addEventListener('click', () => {
+        void retryOneDocument(item.docName, retryBtn);
+      });
+      return el(
+        'div',
+        { class: 'btn-row' },
+        el('span', {}, `${item.docName} — ${item.message}`),
+        retryBtn,
+      );
+    });
+    failedBox.replaceChildren(
+      el('strong', {}, `${items.length} document(s) failed cloud synthesis — retry individually without re-running the rest:`),
+      ...rows,
+    );
+    failedBox.hidden = false;
+  }
+
+  async function persistMergedWorkspace(
+    ws: Workspace,
+    ventureIdMap: Record<string, string>,
+    fallbackDocCount: number,
+    fallbackChunkCount: number,
+  ): Promise<void> {
+    setStage('save', 'run');
+    try {
+      await saveWorkspaceLocal(ws);
+      setStage('save', 'ok', 'Saved to local cache (IndexedDB)', 'cached');
+    } catch (e) {
+      setStage('save', 'skip', `Not persisted: ${errText(e)}`, '—');
+    }
+
+    if (Object.keys(ventureIdMap).length > 0 && remapRequestVentureIds(ventureIdMap)) {
+      syncRequestsFromStorage();
+    }
+
+    const uniqueDocCount = new Set(ws.docs.map((d) => d.docName.toLowerCase())).size || fallbackDocCount;
+    updateSummary(uniqueDocCount, ws.docs.length || fallbackChunkCount, Object.keys(ws.tokenMap).length, ws.graph);
+
+    store.setWorkspace(ws);
+  }
+
+  async function retryOneDocument(docName: string, btn: HTMLButtonElement): Promise<void> {
+    if (running) {
+      toast('Pipeline already running — wait for it to finish', 'warn');
+      return;
+    }
+    if (!lastRun) return;
+    const item = lastRun.failedDocs.get(docName);
+    if (!item) return;
+
+    running = true;
+    btn.disabled = true;
+    btn.textContent = 'Retrying…';
+    setStage('synthesize', 'run', `Retrying ${docName}…`);
+    const retryLog: PayloadLogEntry[] = [];
+    try {
+      const retried = await retrySynthesizeDocument(
+        item.chunks,
+        lastRun.legend,
+        (entry) => retryLog.push(entry),
+        (attempt, waitMs) =>
+          setStage(
+            'synthesize',
+            'run',
+            `Gemini is busy on ${docName}, retrying… (attempt ${attempt} of ${SYNTHESIZE_MAX_ATTEMPTS} failed, waiting ~${Math.max(1, Math.round(waitMs / 1000))}s)`,
+          ),
+        undefined,
+        { extraKnownValues: lastRun.anon.tokenMap },
+      );
+
+      lastRun.orderedSlots.set(item.slotIndex, retried.graph);
+      for (const m of retried.usedModels) lastRun.usedModels.add(m);
+      lastRun.failedDocs.delete(docName);
+
+      const baseWs = store.workspace ?? lastRun.ws;
+      const incomingRetryWs: Workspace = {
+        id: baseWs.id,
+        name: baseWs.name,
+        graph: retried.graph,
+        tokenMap: lastRun.anon.tokenMap,
+        docs: item.chunks.map((b) => ({ docName: b.docName, page: b.page, index: b.index, blindedText: b.text })),
+        payloadLog: retryLog,
+        updatedAt: Date.now(),
+      };
+      const { workspace: mergedWs, ventureIdMap } = mergeWorkspaces(store.workspace, incomingRetryWs);
+      lastRun.ws = mergedWs;
+
+      const models = [...lastRun.usedModels];
+      modelChip.textContent = models.length ? `model: ${models.join(' + ')}` : '';
+
+      const remaining = lastRun.failedDocs.size;
+      const summaryLine = `${mergedWs.graph.ventures.length} venture(s) · ${mergedWs.graph.products.length} SKU(s) · ${mergedWs.graph.dealRules.length} rule(s) · ${mergedWs.payloadLog.length} payload(s) logged${models.length ? ` · model(s): ${models.join(' + ')}` : ''}`;
+      if (remaining === 0) {
+        setStage('synthesize', 'ok', summaryLine, `${mergedWs.payloadLog.length} payloads`);
+      } else {
+        setStage('synthesize', 'err', `${summaryLine} · ${remaining} document(s) still failed`, `${mergedWs.payloadLog.length} payloads`);
+      }
+
+      await persistMergedWorkspace(mergedWs, ventureIdMap, lastRun.docCount, lastRun.chunkCount);
+      renderFailedDocs();
+      toast(`${docName} synthesized and added to workspace`, 'ok');
+    } catch (e) {
+      if (retryLog.length > 0 && lastRun) {
+        lastRun.ws = { ...lastRun.ws, payloadLog: [...lastRun.ws.payloadLog, ...retryLog] };
+      }
+      const msg = errText(e);
+      item.message = msg;
+      setStage('synthesize', 'err', `${docName}: ${msg}`);
+      renderFailedDocs();
+      toast(`Retry failed for ${docName}: ${msg}`, 'warn');
+    } finally {
+      running = false;
+    }
   }
 
   // Honest engine tag for stage 3: NER only when the on-device model is up.
@@ -223,23 +414,81 @@ export function mountIngest(root: HTMLElement): void {
       // `log` as they are recorded (before each request), so an attempted-but-
       // failed cloud call still leaves an honest payload record (CV-SEC-2).
       let graph = EMPTY_GRAPH;
-      let log: PayloadLogEntry[] = [];
+      const log: PayloadLogEntry[] = [];
+      const legend = buildLegend(anon);
+      const orderedSlots = new Map<number, KnowledgeGraph>();
+      let totalSlots = 0;
+      const usedModels = new Set<string>();
+      const failedDocs = new Map<string, FailedDocItem>();
+      let gateBlocked = false;
+
       setStage('synthesize', 'run');
       try {
-        const synth = await synthesizeGraph(anon.blinded, buildLegend(anon), (entry) => log.push(entry),
-          (attempt, waitMs) => setStage('synthesize', 'run',
-            `Gemini is busy, retrying… (attempt ${attempt} of 3 failed, waiting ~${Math.max(1, Math.round(waitMs / 1000))}s)`),
-          ({ call, totalCalls, docNames }) => setStage('synthesize', 'run',
-            `Sending call ${call} of ${totalCalls} — ${docNames.join(', ')}`));
-        graph = synth.graph;
-        setStage('synthesize', 'ok', `${graph.ventures.length} venture(s) · ${graph.products.length} SKU(s) · ${graph.dealRules.length} rule(s) · ${log.length} payload(s) logged${synth.usedModels.length ? ` · model(s): ${synth.usedModels.join(' + ')}` : ''}`, `${log.length} payloads`);
+        const synth = await synthesizeGraph(
+          anon.blinded,
+          legend,
+          (entry) => log.push(entry),
+          undefined,
+          undefined,
+          {
+            allowPartial: true,
+            onPoolProgress: (progress) => {
+              const formatted = formatSynthesizeProgress(progress);
+              setStage('synthesize', 'run', formatted.text, formatted.metric);
+            },
+            onBatchRetry: ({ docNames, attempt, waitMs }) =>
+              setStage(
+                'synthesize',
+                'run',
+                `Gemini is busy on ${docNames.join(', ')}, retrying… (attempt ${attempt} of ${SYNTHESIZE_MAX_ATTEMPTS} failed, waiting ~${Math.max(1, Math.round(waitMs / 1000))}s)`,
+              ),
+          },
+        );
+        for (const m of synth.usedModels) usedModels.add(m);
+        const failureByCall = new Map(synth.failures.map((f) => [f.call - 1, f]));
+        for (let b = 0; b < synth.batchGraphs.length; b++) {
+          const g = synth.batchGraphs[b];
+          if (g) {
+            orderedSlots.set(totalSlots++, g);
+          } else {
+            const fail = failureByCall.get(b);
+            if (fail) {
+              for (const docName of fail.docNames) {
+                const docChunks = fail.chunks.filter((c) => c.docName === docName);
+                failedDocs.set(docName, {
+                  docName,
+                  slotIndex: totalSlots++,
+                  chunks: docChunks,
+                  message: fail.message,
+                });
+              }
+            }
+          }
+        }
+        graph = mergeOrderedGraphSlots(orderedSlots, totalSlots);
+        const models = [...usedModels];
+        const baseSummary = `${graph.ventures.length} venture(s) · ${graph.products.length} SKU(s) · ${graph.dealRules.length} rule(s) · ${log.length} payload(s) logged${models.length ? ` · model(s): ${models.join(' + ')}` : ''}`;
+        if (failedDocs.size === 0) {
+          setStage('synthesize', 'ok', baseSummary, `${log.length} payloads`);
+        } else {
+          setStage(
+            'synthesize',
+            'err',
+            `${baseSummary} · ${failedDocs.size} document(s) failed (${[...failedDocs.keys()].join(', ')})`,
+            `${log.length} payloads`,
+          );
+        }
         // Honest attribution stays visible in the card header, not just the line.
-        modelChip.textContent = synth.usedModels.length ? `model: ${synth.usedModels.join(' + ')}` : '';
+        modelChip.textContent = models.length ? `model: ${models.join(' + ')}` : '';
       } catch (e) {
-        const blocked = e instanceof PayloadBlockedError;
-        setStage('synthesize', 'err', blocked
-          ? `${errText(e)} — workspace kept WITHOUT the cloud graph`
-          : `${errText(e)} — workspace kept WITHOUT the cloud graph (${log.length} attempted payload(s) recorded)`);
+        gateBlocked = e instanceof PayloadBlockedError;
+        setStage(
+          'synthesize',
+          'err',
+          gateBlocked
+            ? `${errText(e)} — workspace kept WITHOUT the cloud graph`
+            : `${errText(e)} — workspace kept WITHOUT the cloud graph (${log.length} attempted payload(s) recorded)`,
+        );
       }
 
       const incomingWs: Workspace = {
@@ -253,36 +502,31 @@ export function mountIngest(root: HTMLElement): void {
       };
       const { workspace: ws, ventureIdMap } = mergeWorkspaces(store.workspace, incomingWs);
 
-      // Stage 5 — local persistence
-      setStage('save', 'run');
-      try {
-        await saveWorkspaceLocal(ws);
-        setStage('save', 'ok', 'Saved to local cache (IndexedDB)', 'cached');
-      } catch (e) {
-        setStage('save', 'skip', `Not persisted: ${errText(e)}`, '—');
+      // Stage 5 — local persistence, venture-id remap, summary, and store update
+      await persistMergedWorkspace(ws, ventureIdMap, texts.length, chunks.length);
+
+      if (!gateBlocked) {
+        lastRun = {
+          anon,
+          legend,
+          docCount: texts.length,
+          chunkCount: chunks.length,
+          ws,
+          orderedSlots,
+          totalSlots,
+          usedModels,
+          failedDocs,
+        };
       }
+      renderFailedDocs();
 
-      if (Object.keys(ventureIdMap).length > 0 && remapRequestVentureIds(ventureIdMap)) {
-        syncRequestsFromStorage();
-      }
-
-      const graphCount = ws.graph.ventures.length + ws.graph.products.length + ws.graph.dealRules.length;
-
-      // Result summary: numbers the pipeline already proved on screen.
-      wsStats.replaceChildren(
-        statCell('Documents', new Set(ws.docs.map((d) => d.docName.toLowerCase())).size || texts.length),
-        statCell('Chunks', ws.docs.length || chunks.length),
-        statCell('Typed tokens', Object.keys(ws.tokenMap).length),
-        statCell('Graph entries', graphCount),
-      );
-      wsSummary.hidden = false;
-
-      store.setWorkspace(ws);
-      const full = ws.graph.ventures.length > 0;
+      const full = ws.graph.ventures.length > 0 && failedDocs.size === 0;
       toast(
         full
           ? `Workspace ready — open Settings → Privacy to see the exact cloud payload`
-          : 'Partial workspace (no cloud graph yet) — check the stage errors and re-run',
+          : failedDocs.size > 0
+            ? `${failedDocs.size} document(s) failed cloud synthesis — use "Retry this document" below`
+            : 'Partial workspace (no cloud graph yet) — check the stage errors and re-run',
         full ? 'ok' : 'warn',
       );
     } finally {
@@ -420,6 +664,7 @@ export function mountIngest(root: HTMLElement): void {
     el('div', { class: 'section-head' }, el('h2', { class: 'section-title' }, 'Pipeline Runner'), modelChip),
     el('p', {}, 'Local stages run first; only blinded tokens cross the boundary to the cloud stage. Errors degrade visibly instead of crashing.'),
     ledger,
+    failedBox,
     evlog,
     wsSummary,
     statusLine,
@@ -469,9 +714,16 @@ export function mountIngest(root: HTMLElement): void {
 
     if (result.workspace === null) {
       await clearWorkspacesLocal();
+      lastRun = null;
+      renderFailedDocs();
       store.setWorkspace(null);
     } else {
       await saveWorkspaceLocal(result.workspace);
+      if (lastRun) {
+        lastRun.ws = result.workspace;
+        lastRun.failedDocs.delete(docName);
+        renderFailedDocs();
+      }
       store.setWorkspace(result.workspace);
     }
     syncRequestsFromStorage();

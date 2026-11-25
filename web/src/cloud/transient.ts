@@ -154,6 +154,8 @@ export interface RetryOptions {
   maxAttempts?: number;
   baseDelayMs?: number;
   maxDelayMs?: number;
+  /** Optional random jitter (0..ms) added on top of server Retry-After so concurrent callers do not stampede. */
+  retryAfterJitterMs?: number;
   sleep?: (ms: number) => Promise<void>;
   rng?: () => number;
   /** UI notice before each wait; attempt = the attempt that just failed (1-based). */
@@ -198,7 +200,11 @@ export async function withTransientRetry<T>(
       }
       const backoff = Math.min(cap, base * 2 ** (attempt - 1));
       const jitter = backoff * rng() * 0.5;
-      const wait = info.retryAfterMs !== undefined ? Math.min(cap, info.retryAfterMs) : backoff + jitter;
+      const retryAfterJitter = (opts.retryAfterJitterMs ?? 0) * rng();
+      const wait =
+        info.retryAfterMs !== undefined
+          ? Math.min(cap, info.retryAfterMs + retryAfterJitter)
+          : backoff + jitter;
       opts.onRetry?.(attempt, Math.round(wait), info.kind);
       await sleep(Math.round(wait));
     }

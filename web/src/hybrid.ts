@@ -10,6 +10,12 @@ import { TRANSIENT_BUSY_MESSAGE, TransientExhaustedError, classifyInferenceError
 
 export type InferenceStage = 'redact' | 'query' | 'synthesize';
 
+/** Hard attempt cap per cloud synthesis call (initial attempt + up to 2 retries). */
+export const SYNTHESIZE_MAX_ATTEMPTS = 3;
+
+/** Jitter spread (ms) added onto server Retry-After so concurrent calls do not retry in lockstep. */
+export const SYNTHESIZE_RETRY_AFTER_JITTER_MS = 500;
+
 export interface GenResult {
   text: string;
   usedOnDevice: boolean;
@@ -76,7 +82,12 @@ export async function generate(
   stage: InferenceStage,
   prompt: string,
   jsonSchema?: object,
-  opts?: { onRetry?: (attempt: number, waitMs: number, kind: string) => void }
+  opts?: {
+    onRetry?: (attempt: number, waitMs: number, kind: string) => void;
+    rng?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+    baseDelayMs?: number;
+  }
 ): Promise<GenResult> {
   if (stage === 'synthesize') {
     const ai = await getAIInstance();
@@ -95,14 +106,19 @@ export async function generate(
       generationConfig,
     });
     // Bounded transient handling (CEO 2026-11-22): 500 high-demand / 503 / 429
-    // only, exponential backoff + jitter, max 3 total calls per payload.
-    // Auth/model 4xx errors are never retried.
+    // only, exponential backoff + jitter (and Retry-After jitter so concurrent
+    // calls do not stampede), max SYNTHESIZE_MAX_ATTEMPTS (3) total calls per
+    // payload. Auth/model 4xx errors are never retried.
     let result: Awaited<ReturnType<GenerativeModel['generateContent']>>;
     let usedModel = modelName;
     try {
       result = await withTransientRetry(() => model.generateContent(prompt), {
-        maxAttempts: 3,
+        maxAttempts: SYNTHESIZE_MAX_ATTEMPTS,
+        retryAfterJitterMs: SYNTHESIZE_RETRY_AFTER_JITTER_MS,
         onRetry: opts?.onRetry,
+        rng: opts?.rng,
+        sleep: opts?.sleep,
+        baseDelayMs: opts?.baseDelayMs,
       });
     } catch (err) {
       const fallback = cloudModelFallback();
