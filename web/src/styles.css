@@ -350,6 +350,50 @@ pre {
   flex-shrink: 0;
 }
 
+.status-menu-btn {
+  display: none;
+  appearance: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-control);
+  background: var(--bg-page);
+  color: var(--text-nav);
+  box-shadow: var(--shadow-ctl);
+  cursor: pointer;
+  transition: border-color var(--t-fast) var(--ease), color var(--t-fast) var(--ease);
+}
+
+.status-menu-btn:hover {
+  color: var(--text-primary);
+  border-color: var(--border-subtle);
+}
+
+.status-popover {
+  display: contents;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.status-dot--ok {
+  background: var(--success-text);
+}
+
+.status-dot--warn {
+  background: var(--warning-text);
+}
+
+.status-dot--muted {
+  background: var(--text-secondary);
+}
+
 .venture-switcher {
   height: 28px;
   padding: 0 var(--sp-2);
@@ -603,6 +647,15 @@ pre {
   font-weight: 600;
 }
 
+.nav-icon {
+  display: none;
+  flex-shrink: 0;
+}
+
+.nav-label {
+  min-width: 0;
+}
+
 .workspace {
   flex: 1;
   min-width: 0;
@@ -799,6 +852,13 @@ pre {
 }
 
 /* ---------- tables: 12px uppercase headers, tabular numerals ---------- */
+.table-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 table.data-table,
 table.token-table {
   width: 100%;
@@ -1388,6 +1448,11 @@ textarea.pairing {
   grid-template-columns: minmax(0, 1fr) 324px;
   gap: var(--sp-6);
   align-items: start;
+}
+
+.main-column,
+.right-column {
+  min-width: 0;
 }
 
 @media (max-width: 940px) {
@@ -2080,6 +2145,307 @@ input.is-invalid {
   .toasts {
     left: var(--sp-2);
     right: var(--sp-2);
+    max-width: none;
+  }
+}
+
+/* ---------- phone screens (<= 480px) ----------
+   Navigation becomes a fixed bottom tab bar (Requests, Rules, Documents,
+   Settings) rather than a hamburger drawer: this matches Stripe's mobile
+   Dashboard, which anchors its four top-level destinations at the bottom
+   for one-handed thumb reach and avoids crowding a 390px top bar that
+   already holds the brand mark, venture switcher, and status menu. */
+@media (max-width: 480px) {
+  .topbar {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto;
+    align-items: center;
+    height: auto;
+    padding: var(--sp-2) var(--sp-3);
+    column-gap: var(--sp-2);
+    row-gap: var(--sp-2);
+  }
+
+  .topbar-brand {
+    grid-column: 1;
+    grid-row: 1;
+    width: auto;
+    height: auto;
+    padding: 0;
+    border-right: none;
+  }
+
+  .topbar-main,
+  .topbar-left {
+    display: contents;
+  }
+
+  .topbar-divider {
+    display: none;
+  }
+
+  .venture-switcher {
+    grid-column: 2;
+    grid-row: 1;
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    height: 44px;
+    min-height: 44px;
+    padding: 0 var(--sp-2);
+    border-color: var(--border-subtle);
+    background: var(--bg-soft);
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .search-box {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .search-box svg {
+    left: var(--sp-3);
+  }
+
+  .search-input {
+    height: 44px;
+    min-height: 44px;
+    padding: 0 var(--sp-3) 0 var(--sp-6);
+    font-size: var(--f-base);
+  }
+
+  .topbar-right {
+    grid-column: 3;
+    grid-row: 1;
+    position: relative;
+  }
+
+  .status-menu-btn {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0 var(--sp-2);
+  }
+
+  .status-popover {
+    display: none;
+    position: absolute;
+    top: calc(100% + var(--sp-1));
+    right: 0;
+    z-index: 50;
+    min-width: 220px;
+    max-width: calc(100vw - var(--sp-5));
+    padding: var(--sp-3);
+    background: var(--bg-page);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-pop);
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--sp-2);
+  }
+
+  .topbar-right.is-open .status-popover {
+    display: flex;
+  }
+
+  .status-popover .chip {
+    height: auto;
+    min-height: 28px;
+    padding: var(--sp-1) var(--sp-2);
+    white-space: normal;
+  }
+
+  .status-popover .theme-toggle {
+    width: 100%;
+    min-height: 44px;
+    height: auto;
+    padding: var(--sp-2) var(--sp-3);
+  }
+
+  .banner--offline {
+    padding: var(--sp-2) var(--sp-3);
+  }
+
+  /* fixed bottom tab bar (Stripe mobile dashboard pattern) */
+  .sidebar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    width: 100%;
+    border-right: none;
+    border-bottom: none;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-page);
+    padding: var(--sp-1) var(--sp-2) calc(var(--sp-1) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .nav-list {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: var(--sp-1);
+  }
+
+  .nav-link {
+    min-height: 44px;
+    height: auto;
+    padding: var(--sp-1);
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--sp-1);
+    font-size: var(--f-2xs);
+    line-height: 1.15;
+    text-align: center;
+  }
+
+  .nav-icon {
+    display: block;
+  }
+
+  .workspace {
+    padding: var(--sp-4) var(--sp-3) calc(68px + var(--sp-5) + env(safe-area-inset-bottom, 0px));
+  }
+
+  .page {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .page-header {
+    padding-bottom: var(--sp-3);
+    margin-bottom: var(--sp-4);
+  }
+
+  .header-row {
+    gap: var(--sp-3);
+  }
+
+  .title-group {
+    flex-wrap: wrap;
+  }
+
+  .actions-group {
+    width: 100%;
+  }
+
+  /* single-column stacking for record pages and multi-column sections */
+  .detail-grid,
+  .form-grid,
+  .meta-grid,
+  .grid-2,
+  .insp-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .detail-grid {
+    gap: var(--sp-5);
+  }
+
+  .form-grid,
+  .meta-grid {
+    gap: var(--sp-3);
+  }
+
+  .main-column,
+  .right-column,
+  .section {
+    min-width: 0;
+  }
+
+  /* tables scroll inside their own container, never the page */
+  .table-scroll {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table-scroll .data-table {
+    min-width: 560px;
+  }
+
+  .table-scroll .token-table {
+    min-width: 480px;
+  }
+
+  .table-scroll .data-table th,
+  .table-scroll .data-table td,
+  .table-scroll .token-table th,
+  .table-scroll .token-table td {
+    white-space: nowrap;
+    overflow-wrap: normal;
+  }
+
+  .ledger {
+    grid-template-columns: 32px minmax(0, 1fr) auto;
+  }
+
+  .boundary-band {
+    text-align: center;
+    padding: var(--sp-1) var(--sp-2);
+    letter-spacing: 0.04em;
+  }
+
+  .evrow {
+    grid-template-columns: 68px minmax(0, 1fr);
+  }
+
+  /* >= 44px touch targets */
+  .btn {
+    min-height: 44px;
+    height: auto;
+    padding: var(--sp-2) var(--sp-3);
+  }
+
+  input[type="text"],
+  input[type="number"],
+  select {
+    min-height: 44px;
+    height: 44px;
+  }
+
+  input[type="file"] {
+    min-height: 44px;
+    width: 100%;
+    max-width: 100%;
+    padding: var(--sp-2) 0;
+  }
+
+  .breadcrumb {
+    min-height: 44px;
+    padding: var(--sp-2) var(--sp-1);
+    margin-left: calc(var(--sp-1) * -1);
+  }
+
+  .link {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding: var(--sp-1) 0;
+  }
+
+  .clause-link {
+    min-height: 44px;
+    min-width: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+  }
+
+  .empty {
+    padding: var(--sp-5) var(--sp-4);
+  }
+
+  .toasts {
+    left: var(--sp-3);
+    right: var(--sp-3);
+    bottom: calc(64px + var(--sp-3) + env(safe-area-inset-bottom, 0px));
     max-width: none;
   }
 }

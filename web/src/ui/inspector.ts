@@ -162,7 +162,7 @@ function tokenTableSection(ws: Workspace): HTMLElement {
     { class: 'section' },
     el('h2', { class: 'section-title' }, `Secret key map — ${rows.length} token(s)`),
     el('p', {}, 'Stored exclusively on this device. The Requests page maps these back into the graph before rendering or computing anything.'),
-    rows.length === 0 ? el('div', { class: 'note note--warn' }, 'Token map is empty — run ingestion on the Documents page.') : table,
+    rows.length === 0 ? el('div', { class: 'note note--warn' }, 'Token map is empty — run ingestion on the Documents page.') : el('div', { class: 'table-scroll' }, table),
   );
 }
 
