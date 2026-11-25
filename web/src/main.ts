@@ -12,6 +12,7 @@ import { mountSync } from './ui/sync';
 import { el, errText, hydrate, toast } from './ui/util';
 import { lsGet, lsSet, registerTabSetter, store } from './ui/state';
 import { initThemeToggle } from './ui/theme';
+import { initTour } from './ui/tour';
 
 const PAGES = ['requests', 'rules', 'documents', 'settings'] as const;
 type PageId = (typeof PAGES)[number];
@@ -170,6 +171,7 @@ function boot(): void {
   setupNetwork();
   void registerServiceWorker();
   restoreWorkspace();
+  initTour();
 }
 
 try {
