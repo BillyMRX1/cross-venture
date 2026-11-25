@@ -1,6 +1,12 @@
 package cv.core
 
+import java.io.InputStreamReader
 import java.util.Base64
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -57,6 +63,48 @@ class PairingTest {
 
     @Test(expected = IllegalArgumentException::class) fun `key with non-base64url chars rejected`() {
         Pairing.parse(encode("""{"wsId":"ws-1","key":"not!base64"}"""))
+    }
+
+    @Test
+    fun `web QR encoder payload round trips and decrypts v1 vector`() {
+        // Exact payload emitted by web/src/ui/pairing.ts encodePairingPayload()
+        // for wsId="550e8400-e29b-41d4-a716-446655440000" and vectors.json v1 keyJwk.
+        val webQrPayload =
+            "eyJ3c0lkIjoiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIiwia2V5IjoiZXlKclpYbGZiM0J6SWpwYkltVnVZM0o1Y0hRaUxDSmtaV055ZVhCMElsMHNJbVY0ZENJNmRISjFaU3dpWVd4bklqb2lRVEkxTmtkRFRTSXNJbXQwZVNJNkltOWpkQ0lzSW1zaU9pSnBVRzE0V2poc00wTktaakpKUVVocVFVdHVSVjlEUzJ0VldWbEpjVE01TVRad1MwdGxUVkF3VkZGckluMCJ9"
+
+        val parsed = Pairing.parse(webQrPayload)
+        assertEquals("550e8400-e29b-41d4-a716-446655440000", parsed.wsId)
+        val key = VaultCrypto.importKeyJwk(parsed.jwkJson())
+
+        val stream = javaClass.classLoader.getResourceAsStream("vectors.json")
+            ?: throw AssertionError("vectors.json fixture missing")
+        val root = stream.use {
+            Json.parseToJsonElement(InputStreamReader(it, Charsets.UTF_8).readText()) as JsonObject
+        }
+        val v1 = (root["vectors"] as JsonArray)[0].jsonObject
+        val iv = (v1["ivB64Url"] as JsonPrimitive).content
+        val cipher = (v1["cipherB64Url"] as JsonPrimitive).content
+        val expectedPlain = (v1["plainJson"] as JsonPrimitive).content
+
+        assertEquals(expectedPlain, VaultCrypto.decryptJson(key, iv, cipher))
+    }
+
+    @Test
+    fun `QR payload with surrounding whitespace or trailing newline parses cleanly`() {
+        val raw = productionPairing("550e8400-e29b-41d4-a716-446655440000")
+        val parsed = Pairing.parse("  $raw\r\n")
+        assertEquals("550e8400-e29b-41d4-a716-446655440000", parsed.wsId)
+        VaultCrypto.importKeyJwk(parsed.jwkJson())
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `non-pairing URL QR code is rejected`() {
+        Pairing.parse("https://cross-venture.example/pair?ws=1")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `non-pairing Wi-Fi QR code is rejected`() {
+        Pairing.parse("WIFI:S:Office;T:WPA;P:secret;;")
     }
 }
 

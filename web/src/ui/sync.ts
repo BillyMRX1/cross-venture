@@ -1,9 +1,10 @@
-// Phone Sync (Settings page): vault key + pairing string, encrypted Firestore
-// push, paste-pairing pull, online/offline chip. Degrades to a setup hint when
+// Phone Sync (Settings page): QR pairing, encrypted Firestore push,
+// paste-pairing pull, online/offline chip. Degrades to a setup hint when
 // Firebase env vars are absent instead of crashing.
 import { exportVaultKey, generateVaultKey } from '../crypto/vault';
 import { pullAndDecrypt, pushEncrypted, ReadOnlyWorkspaceError } from '../storage/db';
 import { deduplicateWorkspace } from '../storage/workspaceOps';
+import { decodePairingPayload, encodePairingPayload, mountPairingPanel } from './pairing';
 import { goTab, lsGet, lsSet, markSyncedCopy, store } from './state';
 import { copyText, el, errText, newId, toast } from './util';
 
@@ -12,24 +13,6 @@ const WSID_KEY = 'cv.wsId';
 function firebaseConfigured(): boolean {
   const env = import.meta.env;
   return Boolean(env.VITE_FIREBASE_PROJECT_ID && env.VITE_FIREBASE_API_KEY && env.VITE_APPCHECK_SITE_KEY);
-}
-
-function b64urlEncode(s: string): string {
-  const bytes = new TextEncoder().encode(s);
-  let bin = '';
-  bytes.forEach((b) => {
-    bin += String.fromCharCode(b);
-  });
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-function b64urlDecode(s: string): string {
-  const b64 = s.replace(/-/g, '+').replace(/_/g, '/');
-  const pad = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
-  const bin = atob(pad);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
 }
 
 function currentWsId(): string {
@@ -56,59 +39,31 @@ export function mountSync(root: HTMLElement): void {
   window.addEventListener('offline', refreshNet);
   refreshNet();
 
-  const statusBox = el('div', { class: 'note', text: 'Idle. Create a pairing string to connect your phone.' });
+  const statusBox = el('div', { class: 'note', text: 'Idle. Click Connect your phone to pair with the mobile app.' });
   function setStatus(kind: 'note' | 'note--ok' | 'note--warn' | 'note--err', text: string): void {
     statusBox.className = `note ${kind}`;
     statusBox.textContent = text;
   }
 
-  const vaultPre = el('pre', { class: 'code', id: 'vaultKeyValue', text: store.vaultKeyString ?? '(no vault key generated this session)' });
-  const pairingBox = el('textarea', {
-    class: 'pairing',
-    id: 'pairingValue',
-    readonly: '',
-    spellcheck: 'false',
-    'aria-label': 'Pairing string — copy into the phone app',
-    placeholder: 'Generated pairing string appears here. Paste it (or show as QR) to the phone.',
-  });
+  /* ---------- QR phone pairing (key + payload + copyable fallback) ---------- */
 
-  /* ---------- generate key + pairing ---------- */
-
-  const genBtn = el('button', { class: 'btn btn-primary' }, 'Pair your phone');
-  genBtn.addEventListener('click', () => {
-    void (async () => {
-      genBtn.disabled = true;
-      setStatus('note', 'Creating an encryption key on this device…');
-      try {
-        let key = store.vaultKey;
-        let exported = store.vaultKeyString;
-        if (!key || !exported) {
-          key = await generateVaultKey();
-          exported = await exportVaultKey(key);
-          store.setVault(key, exported);
-        }
-        vaultPre.textContent = exported;
-        const wsId = currentWsId();
-        const pairing = b64urlEncode(JSON.stringify({ wsId, key: exported }));
-        pairingBox.value = pairing;
-        setStatus('note--ok', 'Pairing ready — the key travels only inside this pairing string.');
-      } catch (e) {
-        setStatus('note--err', `Vault unavailable: ${errText(e)}`);
-      } finally {
-        genBtn.disabled = false;
+  const settingsPage = typeof root.closest === 'function' ? (root.closest('.page') as HTMLElement | null) : null;
+  const pairingPanel = mountPairingPanel({
+    generatePayload: async () => {
+      let key = store.vaultKey;
+      let exported = store.vaultKeyString;
+      if (!key || !exported) {
+        key = await generateVaultKey();
+        exported = await exportVaultKey(key);
+        store.setVault(key, exported);
       }
-    })();
-  });
-
-  const copyPairBtn = el('button', { class: 'btn btn-secondary' }, 'Copy pairing string');
-  copyPairBtn.addEventListener('click', () => {
-    void (async () => {
-      if (!pairingBox.value) {
-        toast('Nothing to copy — generate a pairing string first', 'warn');
-        return;
-      }
-      void copyText(pairingBox.value, 'Pairing string');
-    })();
+      return encodePairingPayload({ wsId: currentWsId(), key: exported });
+    },
+    onCopy: (value) => {
+      void copyText(value, 'Pairing string');
+    },
+    onStatus: setStatus,
+    observeLeaveRoot: settingsPage,
   });
 
   /* ---------- push ---------- */
@@ -124,7 +79,7 @@ export function mountSync(root: HTMLElement): void {
         return;
       }
       if (!key) {
-        setStatus('note--warn', 'Create the pairing string first.');
+        setStatus('note--warn', 'Click Connect your phone first to create a vault key.');
         return;
       }
       pushBtn.disabled = true;
@@ -173,8 +128,7 @@ export function mountSync(root: HTMLElement): void {
         } else {
           let wsId = 'synced';
           try {
-            const decoded = JSON.parse(b64urlDecode(pair)) as { wsId?: unknown };
-            if (typeof decoded.wsId === 'string' && decoded.wsId) wsId = decoded.wsId;
+            wsId = decodePairingPayload(pair).wsId;
           } catch {
             /* pairing format optional — decrypt result is what matters */
           }
@@ -239,8 +193,9 @@ export function mountSync(root: HTMLElement): void {
   function refreshWorkspaceDependents(): void {
     pushBtn.disabled = !configured || !store.workspace;
     wsNoteP.textContent = wsNoteText();
-    if (!configured) return;
-    vaultPre.textContent = store.vaultKeyString ?? '(no vault key generated this session)';
+    if (!store.vaultKey && pairingPanel.isOpen()) {
+      pairingPanel.hide('manual');
+    }
   }
   store.subscribe(refreshWorkspaceDependents);
 
@@ -256,11 +211,9 @@ export function mountSync(root: HTMLElement): void {
     el(
       'div',
       { class: 'section' },
-      el('h3', {}, '1 · Pair your phone'),
-      el('p', {}, 'The encryption key lives only on this device. The pairing string carries your workspace id and key to the phone, which decrypts the data there.'),
-      genBtn,
-      el('div', { class: 'field', style: 'margin-top:12px' }, el('label', {}, 'Vault key (this device only)'), vaultPre),
-      el('div', { class: 'field' }, el('label', {}, 'Pairing string'), pairingBox, copyPairBtn),
+      el('h3', {}, '1 · Connect your phone'),
+      el('p', {}, 'Your encryption key stays on this device. Scan the QR code with the phone app to pair.'),
+      pairingPanel.element,
     ),
     el(
       'div',
@@ -280,5 +233,8 @@ export function mountSync(root: HTMLElement): void {
     el('div', { class: 'section' }, statusBox),
   );
 
-  root.querySelector('#syncGoIngest')?.addEventListener('click', () => goTab('documents'));
+  root.querySelector('#syncGoIngest')?.addEventListener('click', () => {
+    pairingPanel.hide('leave');
+    goTab('documents');
+  });
 }
